@@ -2,10 +2,16 @@
 // ships as pure static files — no image downloads, no keys, no CDN.
 import * as THREE from '../vendor/three.module.js';
 
-function canvas(size = 256) {
+// `scale` renders the same drawing into a bigger bitmap. Canvas shapes are
+// vector operations, so this genuinely sharpens edges and curves rather than
+// enlarging a small image — the texture functions below keep their original
+// coordinates and get twice the resolution for free.
+function canvas(size = 256, scale = 1) {
   const c = document.createElement('canvas');
-  c.width = c.height = size;
-  return [c, c.getContext('2d')];
+  c.width = c.height = size * scale;
+  const x = c.getContext('2d');
+  if (scale !== 1) x.scale(scale, scale);
+  return [c, x];
 }
 
 function tex(c, repeat = 1, aniso = 8) {
@@ -15,6 +21,59 @@ function tex(c, repeat = 1, aniso = 8) {
   t.anisotropy = aniso;
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
+}
+
+/** Derive a normal map from a colour texture, treating brightness as height.
+ *  Not physically right — mortar isn't dark because it is low — but for brick,
+ *  render and tarmac the two line up well enough that the surface stops
+ *  looking like a photograph pasted onto a flat plane. Costs one texture fetch
+ *  per pixel and no extra draw calls. */
+function normalTexture(src, strength = 2.0) {
+  const s = src.width;
+  const [c, x] = canvas(s);
+  const px = src.getContext('2d').getImageData(0, 0, s, s).data;
+
+  // Luminance once per texel rather than four times — this runs during the
+  // loading screen and every millisecond here is a millisecond of black screen.
+  const h = new Float32Array(s * s);
+  for (let i = 0, j = 0; j < h.length; i += 4, j++) {
+    h[j] = (px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114) / 255;
+  }
+
+  const out = x.createImageData(s, s);
+  const d = out.data;
+  // Every texture here is a power of two, so wrapping is a mask rather than
+  // two modulos. Fall back if that ever stops being true.
+  const pow2 = (s & (s - 1)) === 0;
+  const m = s - 1;
+  const wrap = pow2 ? (v) => v & m : (v) => ((v % s) + s) % s;
+
+  for (let y = 0; y < s; y++) {
+    const row = y * s, up = wrap(y - 1) * s, dn = wrap(y + 1) * s;
+    for (let ix = 0; ix < s; ix++) {
+      const dx = (h[row + wrap(ix - 1)] - h[row + wrap(ix + 1)]) * strength;
+      const dy = (h[up + ix] - h[dn + ix]) * strength;
+      const inv = 1 / Math.sqrt(dx * dx + dy * dy + 1);
+      const i = (row + ix) * 4;
+      d[i]     = (dx * inv * 0.5 + 0.5) * 255;
+      d[i + 1] = (dy * inv * 0.5 + 0.5) * 255;
+      d[i + 2] = (inv * 0.5 + 0.5) * 255;
+      d[i + 3] = 255;
+    }
+  }
+  x.putImageData(out, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  // A normal map is data, not colour — tone mapping it would be wrong.
+  t.colorSpace = THREE.NoColorSpace;
+  return t;
+}
+
+/** Colour map plus a normal map derived from it, sharing one source canvas. */
+function surface(src, scale = 1.0, strength = 2.0) {
+  return { map: tex(src, 1), normalMap: normalTexture(src, strength),
+           normalScale: new THREE.Vector2(scale, scale) };
 }
 
 // deterministic noise so every reload looks identical
@@ -57,7 +116,7 @@ function brickTexture(base = [141, 68, 48], mortar = '#b9ad97') {
 
 /** Pebbledash — the other half of every Dublin suburb. */
 function pebbledashTexture() {
-  const [c, x] = canvas(256);
+  const [c, x] = canvas(256, 2);
   x.fillStyle = '#cabfa9';
   x.fillRect(0, 0, 256, 256);
   for (let i = 0; i < 9000; i++) {
@@ -74,7 +133,7 @@ function pebbledashTexture() {
 
 /** Smooth painted render (cream / grey / soft green houses). */
 function renderTexture() {
-  const [c, x] = canvas(256);
+  const [c, x] = canvas(256, 2);
   x.fillStyle = '#e8e2d6';
   x.fillRect(0, 0, 256, 256);
   for (let i = 0; i < 2600; i++) {
@@ -90,7 +149,7 @@ function renderTexture() {
 
 /** Slate/tile roof, laid in courses. */
 function roofTexture() {
-  const [c, x] = canvas(256);
+  const [c, x] = canvas(256, 2);
   x.fillStyle = '#3c4349';
   x.fillRect(0, 0, 256, 256);
   const tw = 26, th = 15;
@@ -136,7 +195,7 @@ function limestoneTexture() {
 
 /** Cut granite — silver-grey, fine speckle, for quoins and dressings. */
 function graniteTexture() {
-  const [c, x] = canvas(256);
+  const [c, x] = canvas(256, 2);
   x.fillStyle = '#b9b6ae';
   x.fillRect(0, 0, 256, 256);
   for (let i = 0; i < 12000; i++) {
@@ -153,7 +212,7 @@ function graniteTexture() {
 
 /** Asphalt with grit. */
 function roadTexture() {
-  const [c, x] = canvas(256);
+  const [c, x] = canvas(256, 2);
   x.fillStyle = '#3a3a3c';
   x.fillRect(0, 0, 256, 256);
   for (let i = 0; i < 14000; i++) {
@@ -170,7 +229,7 @@ function roadTexture() {
 
 /** Concrete pavement slabs. */
 function pavementTexture() {
-  const [c, x] = canvas(256);
+  const [c, x] = canvas(256, 2);
   x.fillStyle = '#9a988f';
   x.fillRect(0, 0, 256, 256);
   const s = 64;
@@ -189,7 +248,7 @@ function pavementTexture() {
 
 /** Grass — front gardens and the greens. */
 function grassTexture() {
-  const [c, x] = canvas(256);
+  const [c, x] = canvas(256, 2);
   x.fillStyle = '#4d7a3a';
   x.fillRect(0, 0, 256, 256);
   for (let i = 0; i < 16000; i++) {
@@ -211,20 +270,23 @@ export function buildMaterials() {
   const wallOpts = { roughness: 0.94, metalness: 0.0, vertexColors: true };
 
   const M = {
-    redbrick: new THREE.MeshStandardMaterial({ map: tex(brickTexture(), 1), ...wallOpts }),
-    pebbledash: new THREE.MeshStandardMaterial({ map: tex(pebbledashTexture(), 1), ...wallOpts }),
-    render: new THREE.MeshStandardMaterial({ map: tex(renderTexture(), 1), ...wallOpts }),
-    stone: new THREE.MeshStandardMaterial({ map: tex(pebbledashTexture(), 1), color: 0xb9b2a3, ...wallOpts }),
+    // The normal-map strengths are set per surface: brick and slate have real
+    // relief, painted render is nearly flat, and grass would read as noise if
+    // it were lit as bumps.
+    redbrick: new THREE.MeshStandardMaterial({ ...surface(brickTexture(), 0.9, 2.4), ...wallOpts }),
+    pebbledash: new THREE.MeshStandardMaterial({ ...surface(pebbledashTexture(), 1.1, 3.0), ...wallOpts }),
+    render: new THREE.MeshStandardMaterial({ ...surface(renderTexture(), 0.35, 1.2), ...wallOpts }),
+    stone: new THREE.MeshStandardMaterial({ ...surface(pebbledashTexture(), 1.0, 2.6), color: 0xb9b2a3, ...wallOpts }),
     // buff brick — the ICCI is brick infill, not stone
     brickBuff: new THREE.MeshStandardMaterial({
-      map: tex(brickTexture([196, 172, 133], '#cdc3ad'), 1), ...wallOpts }),
+      ...surface(brickTexture([196, 172, 133], '#cdc3ad'), 0.9, 2.4), ...wallOpts }),
     steel: new THREE.MeshStandardMaterial({ color: 0xb6bcc0, roughness: 0.28, metalness: 0.8 }),
     // the former Central Mental Hospital: blue limestone with granite dressings
-    limestone: new THREE.MeshStandardMaterial({ map: tex(limestoneTexture(), 1), ...wallOpts }),
-    granite: new THREE.MeshStandardMaterial({ map: tex(graniteTexture(), 1), ...wallOpts }),
-    roof: new THREE.MeshStandardMaterial({ map: tex(roofTexture(), 1), roughness: 0.86, vertexColors: true }),
-    road: new THREE.MeshStandardMaterial({ map: tex(roadTexture(), 1), roughness: 0.97, vertexColors: true }),
-    pavement: new THREE.MeshStandardMaterial({ map: tex(pavementTexture(), 1), roughness: 0.95, vertexColors: true }),
+    limestone: new THREE.MeshStandardMaterial({ ...surface(limestoneTexture(), 1.0, 2.8), ...wallOpts }),
+    granite: new THREE.MeshStandardMaterial({ ...surface(graniteTexture(), 0.5, 1.6), ...wallOpts }),
+    roof: new THREE.MeshStandardMaterial({ ...surface(roofTexture(), 0.9, 2.6), roughness: 0.86, vertexColors: true }),
+    road: new THREE.MeshStandardMaterial({ ...surface(roadTexture(), 0.6, 1.8), roughness: 0.97, vertexColors: true }),
+    pavement: new THREE.MeshStandardMaterial({ ...surface(pavementTexture(), 0.7, 2.0), roughness: 0.95, vertexColors: true }),
     grass: new THREE.MeshStandardMaterial({ map: tex(grassTexture(), 1), roughness: 1.0, vertexColors: true }),
     // scene.environment gives these something to reflect; without it they read
     // as black holes in the wall

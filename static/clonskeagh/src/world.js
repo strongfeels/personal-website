@@ -811,16 +811,39 @@ function addLandmarks(landmarks, M, scene, colliders, labels) {
 }
 
 /** Vertical walls around a footprint, with UVs that keep brick courses level. */
+// Contact shading where a wall meets the ground. Real walls are darker at the
+// base because the ground blocks half the sky there, and without it buildings
+// look like they are hovering. The band is a fixed height in metres, not a
+// fraction, so a four-storey block doesn't get a four-storey smudge.
+const AO_BAND = 2.6;      // metres
+const AO_DARK = 0.66;     // brightness right at the ground
+
 function extrudeWalls(mb, poly, y0, y1, colour) {
   const n = poly.length;
+  const band = Math.min(AO_BAND, (y1 - y0) * 0.5);
   for (let i = 0; i < n; i++) {
     const [x1, z1] = poly[i];
     const [x2, z2] = poly[(i + 1) % n];
     const len = Math.hypot(x2 - x1, z2 - z1);
     if (len < 0.05) continue;
-    const a = [x1, y0, z1], b = [x2, y0, z2], c = [x2, y1, z2], d = [x1, y1, z1];
-    const u = len / BRICK_UV, v = (y1 - y0) / BRICK_UV;
-    mb.quad(b, a, d, c, [[0, 0], [u, 0], [u, v], [0, v]], colour);   // outward-facing
+    const u = len / BRICK_UV;
+    if (band <= 0.01) {
+      const a = [x1, y0, z1], b = [x2, y0, z2], c = [x2, y1, z2], d = [x1, y1, z1];
+      const v = (y1 - y0) / BRICK_UV;
+      mb.quad(b, a, d, c, [[0, 0], [u, 0], [u, v], [0, v]], colour);
+      continue;
+    }
+    // Split into a shaded base and a clean upper face. One extra quad per wall
+    // face; triangles are cheap here, draw calls are not, and this adds none.
+    const ym = y0 + band;
+    const vm = band / BRICK_UV, v1 = (y1 - y0) / BRICK_UV;
+    const a0 = [x1, y0, z1], b0 = [x2, y0, z2];
+    const am = [x1, ym, z1], bm = [x2, ym, z2];
+    const a1 = [x1, y1, z1], b1 = [x2, y1, z2];
+    // quad(bottomRight, bottomLeft, topLeft, topRight) — see MeshBuilder.quad
+    mb.quad(b0, a0, am, bm, [[0, 0], [u, 0], [u, vm], [0, vm]], colour,
+            [AO_DARK, AO_DARK, 1, 1]);
+    mb.quad(bm, am, a1, b1, [[0, vm], [u, vm], [u, v1], [0, v1]], colour);
   }
 }
 

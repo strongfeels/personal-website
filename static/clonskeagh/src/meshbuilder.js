@@ -26,12 +26,22 @@ export class MeshBuilder {
    * OUTSIDE, that points inwards, so pass those four the other way round:
    * quad(bottomRight, bottomLeft, topLeft, topRight).
    */
-  quad(a, b, c, d, uvs, colour) {
+  quad(a, b, c, d, uvs, colour, ao) {
     const n = normal(a, b, c);
     const col = rgb(colour);
     const [ua, ub, uc, ud] = uvs;
-    this._push(a, n, ua, col); this._push(b, n, ub, col); this._push(c, n, uc, col);
-    this._push(a, n, ua, col); this._push(c, n, uc, col); this._push(d, n, ud, col);
+    if (!ao) {
+      this._push(a, n, ua, col); this._push(b, n, ub, col); this._push(c, n, uc, col);
+      this._push(a, n, ua, col); this._push(c, n, uc, col); this._push(d, n, ud, col);
+      return;
+    }
+    // `ao` is one brightness multiplier per corner, in the same order as the
+    // vertices. Baked occlusion rides along in the colour attribute that is
+    // already there, so it costs nothing to draw.
+    const shade = (k) => [col[0] * ao[k], col[1] * ao[k], col[2] * ao[k]];
+    const ca = shade(0), cb = shade(1), cc = shade(2), cd = shade(3);
+    this._push(a, n, ua, ca); this._push(b, n, ub, cb); this._push(c, n, uc, cc);
+    this._push(a, n, ua, ca); this._push(c, n, uc, cc); this._push(d, n, ud, cd);
   }
 
   tri(a, b, c, uvs, colour) {
