@@ -1,0 +1,11 @@
+# The site is served by a Cloudflare Worker with static assets — the name below
+# must match the existing Worker, or a deploy would create a second one without
+# the cianporteous.com custom domain attached.
+name = "broken-disk-1f8a"
+compatibility_date = "2026-08-01"
+
+# No Worker code: everything under static/ is served directly from the edge,
+# which is why the Worker reports no CPU time. _redirects and _headers in that
+# directory are honoured the same way Pages honours them.
+[assets]
+directory = "./static"
