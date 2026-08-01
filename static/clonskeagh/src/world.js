@@ -303,12 +303,39 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     } else if (b.lm && b.lm !== 'commercial' && b.lm !== 'apartments') {
       arcadeWalls(mb, poly, b, wallKey, tint);
     } else if (!isOut) {
-      const nx = Math.cos(b.facing), nz = Math.sin(b.facing);
-      const alongRidge = Math.abs(nx * ux + nz * uz) > 0.7;
-      const ext = alongRidge ? halfL : halfD;
-      const faceW = (alongRidge ? halfD : halfL) * 2;
-      const tx = -nz, tz = nx;                    // tangent along the facade
-      const fx = cx + nx * ext, fz = cz + nz * ext;
+      // Put the front on the wall that actually faces the street, rather than
+      // on the building's bounding rectangle. For anything that isn't a plain
+      // box those are different places — on the worst footprints here, eleven
+      // metres apart — and the door and windows ended up hanging in the garden
+      // with no wall behind them.
+      const wantX = Math.cos(b.facing), wantZ = Math.sin(b.facing);
+      let face = null;
+      for (let i = 0; i < poly.length; i++) {
+        const [x1, z1] = poly[i];
+        const [x2, z2] = poly[(i + 1) % poly.length];
+        const ex = x2 - x1, ez = z2 - z1;
+        const len = Math.hypot(ex, ez);
+        if (len < 2.4) continue;                  // too narrow to be a frontage
+        const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
+        let ox = ez / len, oz = -ex / len;
+        if ((mx - cx) * ox + (mz - cz) * oz < 0) { ox = -ox; oz = -oz; }   // outward
+        // prefer the wall pointing most at the street, and among those the
+        // wider one — a 3m return shouldn't beat the real elevation
+        const score = (ox * wantX + oz * wantZ) * Math.min(len, 12);
+        if (!face || score > face.score) {
+          face = { score, x: mx, z: mz, nx: ox, nz: oz, tx: ex / len, tz: ez / len, w: len };
+        }
+      }
+      if (!face) {                                // nothing wide enough: fall back
+        const alongRidge = Math.abs(wantX * ux + wantZ * uz) > 0.7;
+        const ext = alongRidge ? halfL : halfD;
+        face = { x: cx + wantX * ext, z: cz + wantZ * ext, nx: wantX, nz: wantZ,
+                 tx: -wantZ, tz: wantX, w: (alongRidge ? halfD : halfL) * 2 };
+      }
+      const nx = face.nx, nz = face.nz;
+      const tx = face.tx, tz = face.tz;           // tangent along the facade
+      const fx = face.x, fz = face.z;
+      const faceW = face.w;
       const put = (off, y, w, h, key, colour, proud) => {
         const a = [fx + tx * (off - w / 2) + nx * proud, y, fz + tz * (off - w / 2) + nz * proud];
         const bb = [fx + tx * (off + w / 2) + nx * proud, y, fz + tz * (off + w / 2) + nz * proud];

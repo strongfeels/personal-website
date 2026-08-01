@@ -164,11 +164,19 @@ export class PlayerController {
 
     this.p.group.position.set(this.pos.x, this.pos.y + bob, this.pos.z);
     this.p.group.rotation.y = this.yaw;
-    this.p.group.visible = !this.firstPerson;
 
     // ---- camera
     const eye = new THREE.Vector3(this.pos.x, this.pos.y + 1.62, this.pos.z);
-    if (this.firstPerson) {
+    const dist = this.firstPerson ? 0 : this._camDistClamped();
+
+    // In a narrow side passage there is nowhere to put a third-person camera:
+    // far enough back is inside the neighbour's wall, close enough is inside
+    // the player's head. Slip to eye level instead — the view the F key gives
+    // — rather than filling the screen with the back of a skull.
+    const eyeLevel = this.firstPerson || dist < 1.3;
+    this.p.group.visible = !eyeLevel;
+
+    if (eyeLevel) {
       this.camera.position.copy(eye).addScaledVector(
         new THREE.Vector3(-Math.sin(this.camYaw), 0, -Math.cos(this.camYaw)), 0.18);
       this.camera.lookAt(
@@ -176,28 +184,106 @@ export class PlayerController {
         eye.y - Math.sin(this.camPitch) * 10,
         eye.z - Math.cos(this.camYaw) * 10);
     } else {
-      const d = this._camDistClamped();
       const cy = Math.cos(this.camPitch);
       this.camera.position.set(
-        this.pos.x + Math.sin(this.camYaw) * d * cy,
-        this.pos.y + 1.5 + Math.sin(this.camPitch) * d + 0.4,
-        this.pos.z + Math.cos(this.camYaw) * d * cy);
+        this.pos.x + Math.sin(this.camYaw) * dist * cy,
+        this.pos.y + 1.5 + Math.sin(this.camPitch) * dist + 0.4,
+        this.pos.z + Math.cos(this.camYaw) * dist * cy);
       this.camera.lookAt(this.pos.x, this.pos.y + 1.25, this.pos.z);
     }
   }
 
-  /** Don't let the camera sit inside a house. */
-  _camDistClamped() {
-    let d = this.camDist;
-    const cy = Math.cos(this.camPitch);
-    for (let step = 0; step < 6; step++) {
-      const tx = this.pos.x + Math.sin(this.camYaw) * d * cy;
-      const tz = this.pos.z + Math.cos(this.camYaw) * d * cy;
-      if (!this._inside(tx, tz, 0.5)) break;
-      d *= 0.72;
-      if (d < 1.6) { d = 1.6; break; }
+  /** Don't let the camera sit inside a house.
+   *
+   *  Shrinking the distance until the end point happened to be clear was not
+   *  enough. In a narrow gap between two houses every distance down to the old
+   *  1.6m floor is still inside the neighbour, and the camera was simply left
+   *  there — and from the inside a wall is a back face, so it disappears. That
+   *  is the "invisible walls you can't walk through" effect: you were looking
+   *  out through a house whose windows were still drawn.
+   *
+   *  So find where the sight line first crosses into something and stop just
+   *  short of it, rather than sampling a few points along the way. One pass
+   *  over the colliders instead of up to six.
+   */
+  /** Buildings bucketed by location, so the camera test looks at the handful
+   *  nearby instead of all ninety thousand colliders every frame. Rebuilt only
+   *  when the collider list changes, which happens when you get into a car. */
+  _viewGrid() {
+    if (this._grid && this._gridN === this.colliders.length) return this._grid;
+    const G = 24, cells = new Map();
+    for (const c of this.colliders) {
+      if (c.soft) continue;
+      const r = c.hx + c.hz;
+      for (let gx = Math.floor((c.x - r) / G); gx <= Math.floor((c.x + r) / G); gx++) {
+        for (let gz = Math.floor((c.z - r) / G); gz <= Math.floor((c.z + r) / G); gz++) {
+          const k = gx + ',' + gz;
+          const a = cells.get(k);
+          if (a) a.push(c); else cells.set(k, [c]);
+        }
+      }
     }
-    return d;
+    this._gridN = this.colliders.length;
+    return (this._grid = { G, cells });
+  }
+
+  _camDistClamped() {
+    const cy = Math.cos(this.camPitch);
+    const dx = Math.sin(this.camYaw) * cy, dz = Math.cos(this.camYaw) * cy;
+    const PAD = 0.45;
+    let best = this.camDist;
+
+    // Only the cells the sight line can reach. Testing a collider twice costs
+    // nothing — it yields the same answer — so there is no dedup here.
+    const { G, cells } = this._viewGrid();
+    const ex = this.pos.x + dx * best, ez = this.pos.z + dz * best;
+    const gx0 = Math.floor((Math.min(this.pos.x, ex) - PAD) / G);
+    const gx1 = Math.floor((Math.max(this.pos.x, ex) + PAD) / G);
+    const gz0 = Math.floor((Math.min(this.pos.z, ez) - PAD) / G);
+    const gz1 = Math.floor((Math.max(this.pos.z, ez) + PAD) / G);
+
+    for (let gx = gx0; gx <= gx1; gx++) for (let gz = gz0; gz <= gz1; gz++) {
+    const bucket = cells.get(gx + ',' + gz);
+    if (!bucket) continue;
+    for (const c of bucket) {
+      const ox = this.pos.x - c.x, oz = this.pos.z - c.z;
+      const reach = c.hx + c.hz + PAD + best;     // hx+hz >= the half-diagonal, so this is safe
+      if (ox > reach || ox < -reach || oz > reach || oz < -reach) continue;
+
+      // Ray against an oriented box: rotate into the box's frame and do the
+      // usual slab test.
+      const co = Math.cos(-c.yaw), si = Math.sin(-c.yaw);
+      const lx = ox * co - oz * si, lz = ox * si + oz * co;
+      const rx = dx * co - dz * si, rz = dx * si + dz * co;
+      const hx = c.hx + PAD, hz = c.hz + PAD;
+      let t0 = 0, t1 = best;
+
+      if (rx > -1e-6 && rx < 1e-6) {
+        if (lx > hx || lx < -hx) continue;        // parallel and outside this slab
+      } else {
+        let a = (-hx - lx) / rx, b = (hx - lx) / rx;
+        if (a > b) { const t = a; a = b; b = t; }
+        if (a > t0) t0 = a;
+        if (b < t1) t1 = b;
+        if (t0 > t1) continue;
+      }
+      if (rz > -1e-6 && rz < 1e-6) {
+        if (lz > hz || lz < -hz) continue;
+      } else {
+        let a = (-hz - lz) / rz, b = (hz - lz) / rz;
+        if (a > b) { const t = a; a = b; b = t; }
+        if (a > t0) t0 = a;
+        if (b < t1) t1 = b;
+        if (t0 > t1) continue;
+      }
+      if (t0 < best) best = t0;
+    }
+    }
+    // When the player is pressed against a wall the line enters immediately and
+    // this floor is all that is left. It has to stay under _resolve's 0.34m
+    // standing distance, or the floor itself puts the camera through the wall
+    // it is trying to avoid.
+    return Math.max(0.25, best);
   }
 
   _inside(x, z, pad) {

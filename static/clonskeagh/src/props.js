@@ -17,7 +17,9 @@ const LEAF_COLOURS = [0x3f6f30, 0x4a7d38, 0x35602a, 0x527f3c, 0x2f5a28, 0x5b8642
  * the crown width the way a forester would.
  */
 export function treeColliders(trees, colliders) {
-  for (const t of trees) colliders.push({ x: t.x, z: t.z, hx: 0.34, hz: 0.34, yaw: 0 });
+  // `soft` blocks walking but not the camera: a trunk clipping the view for a
+  // moment is far less jarring than the camera being shoved into your back.
+  for (const t of trees) colliders.push({ x: t.x, z: t.z, hx: 0.34, hz: 0.34, yaw: 0, soft: true });
 }
 
 /** Instanced trunks and canopies for one chunk's worth of trees. */
@@ -96,7 +98,7 @@ export function hedgeParts(hedges) {
 
 export function hedgeColliders(hedges, colliders) {
   for (const [cx, cz, len, w, h, yaw] of hedgeParts(hedges)) {
-    colliders.push({ x: cx, z: cz, hx: len / 2, hz: w / 2, yaw });
+    colliders.push({ x: cx, z: cz, hx: len / 2, hz: w / 2, yaw, soft: true });
   }
 }
 
