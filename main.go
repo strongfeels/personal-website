@@ -73,6 +73,14 @@ func StaticFileServer(staticDir string) http.HandlerFunc {
 
 		// If it's a directory, serve index.html
 		if info.IsDir() {
+			// Redirect /dir to /dir/ first. Without the trailing slash the browser
+			// resolves that page's relative URLs against the parent directory, so
+			// any sub-app served from a folder loads its HTML and then fails to
+			// find its own assets. This is what net/http's own FileServer does.
+			if !strings.HasSuffix(r.URL.Path, "/") {
+				http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+				return
+			}
 			indexPath := filepath.Join(filePath, "index.html")
 			if _, err := os.Stat(indexPath); err == nil {
 				filePath = indexPath
