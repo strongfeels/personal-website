@@ -1,0 +1,4 @@
+# The About page was folded into the landing page. Keep the old URLs working —
+# both are live today and may be linked or bookmarked.
+/about      /  301
+/about.html /  301
