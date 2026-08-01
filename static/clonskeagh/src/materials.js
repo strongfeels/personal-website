@@ -299,7 +299,10 @@ export function buildMaterials() {
     // verdigris — the Church of the Miraculous Medal's copper domes
     copper: new THREE.MeshStandardMaterial({ color: 0x54b39a, roughness: 0.52, metalness: 0.35 }),
     lead: new THREE.MeshStandardMaterial({ color: 0x6d7b74, roughness: 0.62, metalness: 0.3 }),
-    hedge: new THREE.MeshStandardMaterial({ roughness: 1.0, vertexColors: true }),
+    // same trap as `leaf` below: the hedges are instanced boxes coloured with
+    // setColorAt, and a plain BoxGeometry carries no colour attribute — asking
+    // for vertexColors here renders every hedge as a black slab
+    hedge: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1.0 }),
     wall: new THREE.MeshStandardMaterial({ color: 0x8d8577, roughness: 0.95, vertexColors: true }),
     dark: new THREE.MeshStandardMaterial({ roughness: 0.8, vertexColors: true }),
     water: new THREE.MeshStandardMaterial({ color: 0x35566b, roughness: 0.16, metalness: 0.4, vertexColors: true }),
