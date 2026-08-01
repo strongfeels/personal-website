@@ -206,14 +206,15 @@ export class PlayerController {
    *  short of it, rather than sampling a few points along the way. One pass
    *  over the colliders instead of up to six.
    */
-  /** Buildings bucketed by location, so the camera test looks at the handful
-   *  nearby instead of all ninety thousand colliders every frame. Rebuilt only
-   *  when the collider list changes, which happens when you get into a car. */
+  /** Colliders bucketed by location, so walking and the camera both look at the
+   *  handful nearby instead of all hundred-and-thirty thousand every frame.
+   *  Each one goes in every cell it covers, so a point query only has to look
+   *  at the cells it actually touches. Rebuilt when the list changes, which
+   *  happens when you get into a car. */
   _viewGrid() {
     if (this._grid && this._gridN === this.colliders.length) return this._grid;
-    const G = 24, cells = new Map();
+    const G = 16, cells = new Map();
     for (const c of this.colliders) {
-      if (c.soft) continue;
       const r = c.hx + c.hz;
       for (let gx = Math.floor((c.x - r) / G); gx <= Math.floor((c.x + r) / G); gx++) {
         for (let gz = Math.floor((c.z - r) / G); gz <= Math.floor((c.z + r) / G); gz++) {
@@ -246,6 +247,7 @@ export class PlayerController {
     const bucket = cells.get(gx + ',' + gz);
     if (!bucket) continue;
     for (const c of bucket) {
+      if (c.soft) continue;                       // foliage blocks walking, not the view
       const ox = this.pos.x - c.x, oz = this.pos.z - c.z;
       const reach = c.hx + c.hz + PAD + best;     // hx+hz >= the half-diagonal, so this is safe
       if (ox > reach || ox < -reach || oz > reach || oz < -reach) continue;
@@ -276,6 +278,13 @@ export class PlayerController {
         if (b < t1) t1 = b;
         if (t0 > t1) continue;
       }
+      // A roof is not an infinitely tall wall. When the camera is pitched up it
+      // rides over the houses, so anything whose top is below the sight line
+      // where it crosses simply isn't in the way.
+      if (c.h !== undefined) {
+        const rise = this.pos.y + 1.9 + Math.tan(this.camPitch) * t0;
+        if (c.h + 0.4 < rise) continue;
+      }
       if (t0 < best) best = t0;
     }
     }
@@ -286,15 +295,27 @@ export class PlayerController {
     return Math.max(0.25, best);
   }
 
-  _inside(x, z, pad) {
-    for (const c of this.colliders) {
-      const dx = x - c.x, dz = z - c.z;
-      if (Math.abs(dx) > c.hx + c.hz + pad + 2) continue;
-      const co = Math.cos(-c.yaw), si = Math.sin(-c.yaw);
-      const lx = dx * co - dz * si, lz = dx * si + dz * co;
-      if (Math.abs(lx) < c.hx + pad && Math.abs(lz) < c.hz + pad) return true;
+  /** Run fn over every collider that could contain a point within `r` of x,z. */
+  _near(x, z, r, fn) {
+    const { G, cells } = this._viewGrid();
+    for (let gx = Math.floor((x - r) / G); gx <= Math.floor((x + r) / G); gx++) {
+      for (let gz = Math.floor((z - r) / G); gz <= Math.floor((z + r) / G); gz++) {
+        const bucket = cells.get(gx + ',' + gz);
+        if (!bucket) continue;
+        for (const c of bucket) if (fn(c)) return true;
+      }
     }
     return false;
+  }
+
+  _inside(x, z, pad) {
+    return this._near(x, z, pad + 0.1, (c) => {
+      const dx = x - c.x, dz = z - c.z;
+      if (Math.abs(dx) > c.hx + c.hz + pad + 2) return false;
+      const co = Math.cos(-c.yaw), si = Math.sin(-c.yaw);
+      const lx = dx * co - dz * si, lz = dx * si + dz * co;
+      return Math.abs(lx) < c.hx + pad && Math.abs(lz) < c.hz + pad;
+    });
   }
 
   /** Push out of any building we've walked into, along the shallowest axis. */
@@ -302,15 +323,16 @@ export class PlayerController {
     const pad = 0.34;
     for (let iter = 0; iter < 3; iter++) {
       let hit = false;
-      for (const c of this.colliders) {
+      // The push moves x,z, so the candidates are gathered fresh each pass.
+      this._near(x, z, pad + 0.1, (c) => {
         const dx = x - c.x, dz = z - c.z;
         const reach = c.hx + c.hz + pad + 1;
-        if (Math.abs(dx) > reach || Math.abs(dz) > reach) continue;
+        if (Math.abs(dx) > reach || Math.abs(dz) > reach) return false;
         const co = Math.cos(-c.yaw), si = Math.sin(-c.yaw);
         const lx = dx * co - dz * si, lz = dx * si + dz * co;
         const ox = c.hx + pad - Math.abs(lx);
         const oz = c.hz + pad - Math.abs(lz);
-        if (ox <= 0 || oz <= 0) continue;
+        if (ox <= 0 || oz <= 0) return false;
         let nlx = lx, nlz = lz;
         if (ox < oz) nlx += Math.sign(lx || 1) * ox;
         else nlz += Math.sign(lz || 1) * oz;
@@ -318,7 +340,8 @@ export class PlayerController {
         x = c.x + nlx * bc - nlz * bs;
         z = c.z + nlx * bs + nlz * bc;
         hit = true;
-      }
+        return false;                      // keep going: other walls may still push
+      });
       if (!hit) break;
     }
     return [x, z];

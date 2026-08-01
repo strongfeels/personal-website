@@ -23,6 +23,48 @@ function hash01(id, salt = 0) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
+function pointInPoly(poly, x, z) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, zi] = poly[i], [xj, zj] = poly[j];
+    if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+function distToPoly(poly, x, z) {
+  let best = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const [x1, z1] = poly[i];
+    const [x2, z2] = poly[(i + 1) % poly.length];
+    const dx = x2 - x1, dz = z2 - z1;
+    const L2 = dx * dx + dz * dz;
+    const t = L2 < 1e-9 ? 0 : Math.max(0, Math.min(1, ((x - x1) * dx + (z - z1) * dz) / L2));
+    best = Math.min(best, Math.hypot(x - (x1 + dx * t), z - (z1 + dz * t)));
+  }
+  return best;
+}
+
+/**
+ * How far the corners of a pitched roof would hang out past the walls.
+ *
+ * The roof is generated over the building's bounding rectangle, which only
+ * matches the building when the building is a rectangle. Rather than guess
+ * from an area ratio, measure the thing that actually shows: a corner of the
+ * roof sitting over open ground with no wall under it.
+ */
+function roofOverhang(poly, cx, cz, ux, uz, vx, vz, halfL, halfD) {
+  let worst = 0;
+  for (const [su, sv] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    const du = (halfL + EAVE) * su, dv = (halfD + EAVE) * sv;
+    const x = cx + ux * du + vx * dv, z = cz + uz * du + vz * dv;
+    if (pointInPoly(poly, x, z)) continue;
+    const d = distToPoly(poly, x, z);
+    if (d > worst) worst = d;
+  }
+  return worst;
+}
+
 /** Extent of a footprint along a given axis: returns [min,max] of the projection. */
 function projectExtent(poly, ax, az) {
   let lo = Infinity, hi = -Infinity;
@@ -224,9 +266,6 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
 
     // a nave carrying domes has no pitched roof to build
     if (domed.has(b.id)) b = { ...b, roof: 'flat' };
-    const wallTop = b.roof === 'flat' ? b.h + 0.35 : b.h;
-    extrudeWalls(mb[wallKey], poly, 0, wallTop, tint);
-
     // ---- oriented box from the baked ridge angle
     const ux = Math.cos(b.ridge), uz = Math.sin(b.ridge);   // along ridge
     const vx = -uz, vz = ux;                                // across ridge
@@ -237,9 +276,26 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     const cx = ux * uc + vx * vc, cz = uz * uc + vz * vc;
     const P = (du, dv, y) => [cx + ux * du + vx * dv, y, cz + uz * du + vz * dv];
 
+    // The pitched roof below is generated over that bounding box, which only
+    // fits when the building is a box. On an L-shaped or angled footprint it
+    // hangs out over the garden with no wall beneath it — a roof floating in
+    // mid-air, in front of a collider you still can't walk through. Over a
+    // quarter of the buildings here overhang by more than a metre and the
+    // worst by nearly sixty, so anything that isn't roughly rectangular gets a
+    // flat roof on its real outline instead.
+    // Two different thresholds on the same measurement, because they are two
+    // different kinds of decision. Collision accuracy has no downside, so any
+    // real overhang gets walls you can actually touch. Roof shape is a look:
+    // a metre of extra eaves reads as generous, so only the badly wrong ones
+    // give up their pitch.
+    const overhang = roofOverhang(poly, cx, cz, ux, uz, vx, vz, halfL, halfD);
+    const flatRoof = b.roof === 'flat' || overhang > 3.0;
+
+    const wallTop = flatRoof ? b.h + 0.35 : b.h;
+    extrudeWalls(mb[wallKey], poly, 0, wallTop, tint);
 
     // ---- roof
-    if (b.roof === 'flat') {
+    if (flatRoof) {
       mb.dark.polyFlat(poly, b.h + 0.36, 3, 0x4a4a4c);
     } else {
       const L = halfL + EAVE, D = halfD + EAVE, y0 = b.h, y1 = b.h + b.roofH;
@@ -468,7 +524,32 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     const uc = (ulo + uhi) / 2, vc = (vlo + vhi) / 2;
     const halfL = (uhi - ulo) / 2, halfD = (vhi - vlo) / 2;
     const cx = ux * uc + vx * vc, cz = uz * uc + vz * vc;
-    colliders.push({ x: cx, z: cz, hx: halfL, hz: halfD, yaw: b.ridge });
+    // The bounding box is also what you bump into, so on those same footprints
+    // it walls off garden you can plainly see is empty. Where it fits the
+    // building, keep it — one box is far cheaper than six. Where it doesn't,
+    // put a slab along each wall so the obstruction matches what's drawn.
+    // Same test the roof uses, so the two can never disagree.
+    const poly = b.poly;
+    const overhang = roofOverhang(poly, cx, cz, ux, uz, vx, vz, halfL, halfD);
+    const boxy = overhang <= 1.0;               // matches the walls closely enough
+    // how high it stands, so the camera can rise clear of it rather than
+    // treating every roof as an infinitely tall wall in plan view
+    const top = b.h + (b.roof !== 'flat' && overhang <= 3.0 ? (b.roofH || 0) : 0.4);
+    if (boxy) {
+      colliders.push({ x: cx, z: cz, hx: halfL, hz: halfD, yaw: b.ridge, h: top });
+    } else {
+      for (let i = 0; i < poly.length; i++) {
+        const [x1, z1] = poly[i];
+        const [x2, z2] = poly[(i + 1) % poly.length];
+        const ex = x2 - x1, ez = z2 - z1;
+        const len = Math.hypot(ex, ez);
+        if (len < 0.4) continue;
+        colliders.push({
+          x: (x1 + x2) / 2, z: (z1 + z2) / 2,
+          hx: len / 2, hz: 0.3, yaw: Math.atan2(ez, ex), h: top,
+        });
+      }
+    }
     if (b.name) {
       labels.push({ name: b.name, x: cx, z: cz, y: b.h + b.roofH + 2.5, kind: b.amenity });
     }
