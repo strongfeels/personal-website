@@ -169,16 +169,12 @@ export class PlayerController {
     const eye = new THREE.Vector3(this.pos.x, this.pos.y + 1.62, this.pos.z);
     const dist = this.firstPerson ? 0 : this._camDistClamped();
 
-    // In a narrow side passage there is nowhere to put a third-person camera:
-    // far enough back is inside the neighbour's wall, close enough is inside
-    // the player's head. Slip to eye level instead — the view the F key gives
-    // — rather than filling the screen with the back of a skull.
-    //
-    // The threshold is deliberately low. Over-the-shoulder still works at a
-    // metre, and this should feel like a rescue from an impossible camera, not
-    // like the game taking the camera off you. It never fires in the open, and
-    // for roughly one angle in eight when you are right up against a house.
-    const eyeLevel = this.firstPerson || dist < 0.9;
+    // In a tight spot the camera just comes in close and stays third-person.
+    // It used to slip to eye level once there was nowhere to stand it, which
+    // reads as the game taking the camera off you — first person is the F key's
+    // job, not something to be dropped into. Only the floor in
+    // _camDistClamped stops it going through the wall behind.
+    const eyeLevel = this.firstPerson;
     this.p.group.visible = !eyeLevel;
 
     if (eyeLevel) {
