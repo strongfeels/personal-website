@@ -173,7 +173,12 @@ export class PlayerController {
     // far enough back is inside the neighbour's wall, close enough is inside
     // the player's head. Slip to eye level instead — the view the F key gives
     // — rather than filling the screen with the back of a skull.
-    const eyeLevel = this.firstPerson || dist < 1.3;
+    //
+    // The threshold is deliberately low. Over-the-shoulder still works at a
+    // metre, and this should feel like a rescue from an impossible camera, not
+    // like the game taking the camera off you. It never fires in the open, and
+    // for roughly one angle in eight when you are right up against a house.
+    const eyeLevel = this.firstPerson || dist < 0.9;
     this.p.group.visible = !eyeLevel;
 
     if (eyeLevel) {
