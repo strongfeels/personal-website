@@ -22,6 +22,8 @@ const hud = {
   audio: document.getElementById('audio'),
 };
 
+if (hasTouch()) hud.audio.textContent = '\u{1F50A} tap for sound';
+
 // A phone has a fraction of the fill rate and a much denser screen, so it gets a
 // lighter profile: fewer pixels, a smaller shadow map, less to draw.
 const MOBILE = (('ontouchstart' in window) || navigator.maxTouchPoints > 0)
@@ -575,12 +577,12 @@ function animate() {
     if (drive) {
       hud.speed.firstChild.textContent = String(Math.round(Math.abs(drive.speed) * 3.6));
       hud.speed.style.opacity = 1;
-      hud.prompt.textContent = 'E — get out';
+      hud.prompt.textContent = touch ? 'Tap Exit to get out' : 'E — get out';
       hud.prompt.style.opacity = Math.abs(drive.speed) < 0.6 ? 1 : 0;
     } else {
       hud.speed.style.opacity = 0;
       const near = nearestParkedSlot() >= 0;
-      hud.prompt.textContent = 'E — get in';
+      hud.prompt.textContent = touch ? 'Tap Car to get in' : 'E — get in';
       hud.prompt.style.opacity = near ? 1 : 0;
     }
     const pl = nearestPlace();
