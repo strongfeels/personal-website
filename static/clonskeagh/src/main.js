@@ -112,6 +112,7 @@ let takenSlot = -1;
 let worldData = null;
 const sound = new Sound();
 let stepPhase = 0;
+let meter = null;
 let touch = null;
 let labels = [];
 const clock = new THREE.Clock();
@@ -187,11 +188,18 @@ async function boot() {
   hud.loadingText.textContent = 'Building the streets around you…';
   await frame();
   for (let pass = 0; pass < 400; pass++) {
-    if (world.stream(controller.pos, 4) === 0) break;
+    if (world.stream(controller.pos, 40) === 0) break;
     if (pass % 6 === 5) await frame();
   }
 
   if (q.has('drive')) enterCar();          // start behind the wheel
+
+  if (q.has('fps')) {
+    meter = document.createElement('div');
+    meter.className = 'hud';
+    meter.id = 'meter';
+    document.body.appendChild(meter);
+  }
 
   applySky(q.get('sky') || 'day');
   drawMinimap();
@@ -555,9 +563,10 @@ function animate() {
     sound.engineOff();
   }
 
-  // bring in the chunks you're heading towards, a couple per frame so arriving
-  // somewhere new never stalls
-  if (world) world.stream(controller.pos, drive ? 3 : 2);
+  // bring in the chunks you're heading towards. The number is a millisecond
+  // budget, not a chunk count — a big chunk now spills across frames instead of
+  // blocking one.
+  if (world) world.stream(controller.pos, drive ? 6 : 5);
 
   updateSun();
 
@@ -580,7 +589,23 @@ function animate() {
   }
   updateMinimap();          // scrolls with you, so it can't run at 5 Hz
   renderer.render(scene, camera);
+
+  if (meter) {
+    meterFrames++;
+    meterWorst = Math.max(meterWorst, dt);
+    const now = performance.now();
+    if (now - meterAt > 500) {
+      const fps = meterFrames / ((now - meterAt) / 1000);
+      let resident = 0;
+      for (const c of world.cells.values()) if (c.group) resident++;
+      meter.textContent = `${fps.toFixed(0)} fps · worst frame ${(meterWorst * 1000).toFixed(0)} ms · `
+        + `${resident} chunks`;
+      meterFrames = 0; meterWorst = 0; meterAt = now;
+    }
+  }
 }
+
+let meterFrames = 0, meterWorst = 0, meterAt = performance.now();
 
 boot().catch((err) => {
   hud.loadingText.textContent = 'Failed: ' + err.message;

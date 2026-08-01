@@ -456,30 +456,50 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
   hedgeColliders(veg.hedges || [], colliders);
 
   // ------------------------------------------------- build / drop a cell ----
-  function buildCell(c) {
-    if (c.group) return;
+  // Building a whole chunk at once meant one frame doing every building, road
+  // and tree in 220 m of city, plus all the mesh uploads — which is exactly what
+  // a stutter is. So a chunk is prepared as a queue of small jobs and worked
+  // through against a time budget, spilling into the next frame when it runs out.
+  function prepare(c) {
     const mb = makeBuilders();
-    for (const a of c.areas) emitArea(mb, a);
-    for (const w of c.water) emitWater(mb, w);
-    for (const r of c.roads) emitRoad(mb, r);
-    for (const p of c.paths) emitPath(mb, p);
-    for (const b of c.buildings) emitBuilding(mb, b);
-    for (const bar of c.barriers) emitBarrier(mb, bar);
-    for (const r of c.lamps) emitLamps(mb, r);
+    const q = [];
+    for (const a of c.areas) q.push(() => emitArea(mb, a));
+    for (const w of c.water) q.push(() => emitWater(mb, w));
+    for (const r of c.roads) q.push(() => emitRoad(mb, r));
+    for (const p of c.paths) q.push(() => emitPath(mb, p));
+    for (const b of c.buildings) q.push(() => emitBuilding(mb, b));
+    for (const bar of c.barriers) q.push(() => emitBarrier(mb, bar));
+    for (const r of c.lamps) q.push(() => emitLamps(mb, r));
 
     const g = new THREE.Group();
     g.name = `chunk ${c.key}`;
-    for (const [key, builder] of Object.entries(mb)) {
-      if (builder.count === 0) continue;
-      g.add(builder.build(M[key]));
+    // the meshes can only be made once every emitter above has run, so they go
+    // on the end of the same queue
+    for (const key of KEYS) {
+      q.push(() => { if (mb[key].count) g.add(mb[key].build(M[key])); });
     }
-    for (const mesh of makeTrees(c.trees, M)) g.add(mesh);
-    for (const mesh of makeHedges(c.hedges, M)) g.add(mesh);
-    scene.add(g);
-    c.group = g;
+    q.push(() => { for (const m of makeTrees(c.trees, M)) g.add(m); });
+    q.push(() => { for (const m of makeHedges(c.hedges, M)) g.add(m); });
+    q.push(() => { scene.add(g); c.group = g; });
+
+    c.pending = { q, i: 0 };
+  }
+
+  /** Work at a chunk until the deadline. Returns true when it's finished. */
+  function stepCell(c, deadline) {
+    if (!c.pending) prepare(c);
+    const p = c.pending;
+    while (p.i < p.q.length) {
+      p.q[p.i++]();
+      // check the clock every few jobs rather than every one
+      if ((p.i & 15) === 0 && performance.now() >= deadline) return false;
+    }
+    c.pending = null;
+    return true;
   }
 
   function dropCell(c) {
+    c.pending = null;                    // abandon any half-built work
     if (!c.group) return;
     scene.remove(c.group);
     // free the GPU buffers; the materials are shared, so leave those alone
@@ -491,19 +511,27 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
   }
 
   /**
-   * Build the cells you can see, drop the ones you can't. `budget` caps how many
-   * are generated per call so arriving somewhere new never stalls a frame.
+   * Build what you can see, drop what you can't. `ms` caps how long may be spent
+   * generating geometry this frame, so arriving somewhere new costs a slightly
+   * later chunk rather than a dropped frame.
    */
-  function stream(pos, budget = 1) {
-    const list = [];
+  function stream(pos, ms = 6) {
+    const deadline = performance.now() + ms;
+    const todo = [];
     for (const c of cells.values()) {
       const d = Math.hypot(c.cx - pos.x, c.cz - pos.z);
-      if (!c.group && d < STREAM_IN) list.push([d, c]);
-      else if (c.group && d > STREAM_OUT) dropCell(c);
+      if (d < STREAM_IN) {
+        if (!c.group || c.pending) todo.push([d, c]);
+      } else if (d > STREAM_OUT && (c.group || c.pending)) {
+        dropCell(c);
+      }
     }
-    list.sort((a, b) => a[0] - b[0]);          // nearest first
-    for (let i = 0; i < Math.min(budget, list.length); i++) buildCell(list[i][1]);
-    return list.length;
+    todo.sort((a, b) => a[0] - b[0]);          // nearest first
+    for (const [, c] of todo) {
+      if (performance.now() >= deadline) break;
+      stepCell(c, deadline);
+    }
+    return todo.length;
   }
 
   // the ground plane and the landmarks are small and always present
@@ -532,7 +560,7 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
   scene.add(group);
   console.log(`world: ${cells.size} chunks, streamed on demand`);
 
-  return { colliders, labels, group, cells, stream, buildCell };
+  return { colliders, labels, group, cells, stream };
 }
 
 /** An upright rectangular panel in a wall plane. */

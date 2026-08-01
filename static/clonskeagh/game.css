@@ -92,3 +92,5 @@ body.touch #help { display: none; }
 body.touch #credit { display: none; }
 body.touch #minimap { width: 128px; height: 128px; bottom: auto; top: 88px; }
 body.touch 
+#meter { top: 20px; left: 22px; font: 500 12px ui-monospace, Menlo, monospace;
+  color: #9fe0a8; background: rgba(10,14,20,.6); padding: 5px 10px; border-radius: 6px; }
