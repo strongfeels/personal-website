@@ -27,7 +27,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14;
   color: #fff; text-align: right; transition: opacity .25s; opacity: 0; }
 #speed small { display: block; font: 500 11px ui-sans-serif, sans-serif; color: #9fb0c0;
   letter-spacing: .08em; }
-#stats { bottom: 16px; left: 22px; font-size: 11.5px; color: #8a97a5; letter-spacing: .02em; }
 
 #minimap { position: fixed; bottom: 18px; right: 18px; width: 190px; height: 190px;
   border-radius: 14px; border: 1px solid rgba(255,255,255,.16); opacity: .9;
@@ -92,4 +91,4 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14;
 body.touch #help { display: none; }
 body.touch #credit { display: none; }
 body.touch #minimap { width: 128px; height: 128px; bottom: auto; top: 88px; }
-body.touch #stats { font-size: 10px; bottom: 8px; }
+body.touch 

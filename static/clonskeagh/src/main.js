@@ -16,7 +16,6 @@ const hud = {
   clock: document.getElementById('clock'),
   loading: document.getElementById('loading'),
   loadingText: document.getElementById('loading-text'),
-  stats: document.getElementById('stats'),
   prompt: document.getElementById('prompt'),
   speed: document.getElementById('speed'),
   minimap: document.getElementById('minimap'),
@@ -197,9 +196,6 @@ async function boot() {
   applySky(q.get('sky') || 'day');
   drawMinimap();
 
-  hud.stats.textContent =
-    `${worldData.meta.counts.buildings} buildings · ${worldData.meta.counts.roads} roads · `
-    + `${veg.trees.length} trees · ${veg.hedges.length} hedges · OSM + satellite`;
   hud.loading.classList.add('gone');
 
   // draw one frame synchronously so there's always something on screen even if
@@ -432,6 +428,23 @@ function driveCamera(dt) {
     d = Math.atan2(Math.sin(d), Math.cos(d));
     controller.camYaw += d * Math.min(1, dt * 1.6);
   }
+  if (controller.firstPerson) {
+    // sit in the driver's seat. Local +z is the way the car faces and +y is up,
+    // so starboard — right-hand drive — is -x.
+    const c = Math.cos(drive.yaw), s = Math.sin(drive.yaw);
+    const ox = -0.36, oz = -0.15;                 // seat, in car-local metres
+    const px = drive.x + ox * c + oz * s;
+    const pz = drive.z - ox * s + oz * c;
+    const eye = 1.32;
+    camera.position.set(px, eye, pz);
+    // camYaw points at the camera from the car, so looking is the reverse of it
+    camera.lookAt(
+      px - Math.sin(controller.camYaw) * 10,
+      eye - Math.sin(controller.camPitch) * 10,
+      pz - Math.cos(controller.camYaw) * 10);
+    return;
+  }
+
   const dist = 10.5, cy = Math.cos(controller.camPitch);
   camera.position.set(
     drive.x + Math.sin(controller.camYaw) * dist * cy,
@@ -460,9 +473,9 @@ addEventListener('keydown', (e) => {
   }
   if (e.code === 'KeyE') { if (drive) exitCar(); else enterCar(); }
   if (e.code === 'KeyN') applySky(skyMode === 'day' ? 'dusk' : skyMode === 'dusk' ? 'night' : 'day');
-  if (e.code === 'KeyC') controller.firstPerson = !controller.firstPerson;
+  if (e.code === 'KeyF') controller.firstPerson = !controller.firstPerson;
   if (e.code === 'KeyM') hud.minimap.classList.toggle('big');
-  if (e.code === 'KeyH') document.getElementById('help').classList.toggle('gone');
+  if (e.code === 'KeyC') document.getElementById('help').classList.toggle('gone');
   if (e.code === 'KeyR') {
     const ave = worldData.gledswoodAvenue.flat();
     const mid = ave[Math.floor(ave.length / 2)];
