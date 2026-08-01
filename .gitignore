@@ -1,0 +1,12 @@
+# TLS material — localhost-key.pem is a private key and must never be committed
+localhost-key.pem
+localhost.pem
+*.pem
+
+# macOS / IDE noise
+.DS_Store
+.idea/
+
+# compiled binaries
+my-website
+main
