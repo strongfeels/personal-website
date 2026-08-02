@@ -129,6 +129,10 @@ async function boot() {
   const marks = await fetch('./landmarks.json')
     .then((r) => (r.ok ? r.json() : { landmarks: [] }))
     .catch(() => ({ landmarks: [] }));
+  // bunkers and greens, traced from imagery — OSM has only the course outline
+  const golf = await fetch('./golf.json')
+    .then((r) => (r.ok ? r.json() : { courses: [] }))
+    .catch(() => ({ courses: [] }));
 
   hud.loadingText.textContent = 'Mixing mortar…';
   await frame();
@@ -136,7 +140,7 @@ async function boot() {
 
   hud.loadingText.textContent = `Placing ${worldData.meta.counts.buildings} buildings…`;
   await frame();
-  const built = buildWorld(worldData, materials, scene, marks, veg);
+  const built = buildWorld(worldData, materials, scene, marks, veg, golf);
   labels = built.labels;
   world = built;
 

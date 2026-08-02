@@ -247,6 +247,71 @@ function pavementTexture() {
 }
 
 /** Grass — front gardens and the greens. */
+/** Clipped hedge: dense small leaves, dark gaps where the light doesn't reach. */
+function hedgeTexture() {
+  const [c, x] = canvas(256, 2);
+  x.fillStyle = '#1e2e18';                       // shadow deep inside the hedge
+  x.fillRect(0, 0, 256, 256);
+  // leaves, dark ones first so the bright ones read as the outer surface
+  for (const [n, lo, hi, a] of [[7000, 40, 70, 0.55], [6000, 60, 105, 0.7], [3000, 95, 150, 0.8]]) {
+    for (let i = 0; i < n; i++) {
+      const g = lo + rnd() * (hi - lo);
+      x.fillStyle = `rgba(${Math.round(g * 0.55)},${Math.round(g)},${Math.round(g * 0.42)},${a})`;
+      const px = rnd() * 256, py = rnd() * 256;
+      const r = 1.1 + rnd() * 2.2, rot = rnd() * 3.14;
+      x.save(); x.translate(px, py); x.rotate(rot);
+      x.beginPath(); x.ellipse(0, 0, r, r * 0.55, 0, 0, 7); x.fill();
+      x.restore();
+    }
+  }
+  // clumping, so it isn't a uniform fuzz
+  for (let i = 0; i < 70; i++) {
+    x.fillStyle = `rgba(20,34,16,${rnd() * 0.30})`;
+    x.beginPath(); x.arc(rnd() * 256, rnd() * 256, 8 + rnd() * 26, 0, 7); x.fill();
+  }
+  return c;
+}
+
+/** Raked bunker sand — pale, warm, faintly banded. */
+function sandTexture() {
+  const [c, x] = canvas(256, 2);
+  x.fillStyle = '#d8c9a4';
+  x.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 9000; i++) {              // grain
+    const g = 190 + rnd() * 55;
+    x.fillStyle = `rgba(${Math.round(g)},${Math.round(g * 0.93)},${Math.round(g * 0.74)},${0.3 + rnd() * 0.4})`;
+    x.fillRect(rnd() * 256, rnd() * 256, 1 + rnd(), 1 + rnd());
+  }
+  for (let i = 0; i < 26; i++) {                // rake lines
+    x.strokeStyle = `rgba(150,133,102,${0.05 + rnd() * 0.06})`;
+    x.lineWidth = 1.2;
+    const y = rnd() * 256;
+    x.beginPath(); x.moveTo(0, y); x.bezierCurveTo(80, y + 6, 170, y - 6, 256, y); x.stroke();
+  }
+  for (let i = 0; i < 22; i++) {                // damp patches
+    x.fillStyle = `rgba(160,144,112,${rnd() * 0.10})`;
+    x.beginPath(); x.arc(rnd() * 256, rnd() * 256, 10 + rnd() * 34, 0, 7); x.fill();
+  }
+  return c;
+}
+
+/** Putting green — tight turf, faint mowing stripes. */
+function greenTexture() {
+  const [c, x] = canvas(256, 2);
+  x.fillStyle = '#3f7a35';
+  x.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 14000; i++) {
+    const g = 105 + rnd() * 55;
+    x.fillStyle = `rgba(${Math.round(g * 0.5)},${Math.round(g)},${Math.round(g * 0.42)},${0.25 + rnd() * 0.4})`;
+    x.fillRect(rnd() * 256, rnd() * 256, 1, 1 + rnd());
+  }
+  for (let i = 0; i < 16; i++) {                // mower stripes
+    x.fillStyle = `rgba(255,255,255,${0.018 + rnd() * 0.012})`;
+    x.fillRect(0, i * 16 + rnd() * 3, 256, 8);
+  }
+  return c;
+}
+
 function grassTexture() {
   const [c, x] = canvas(256, 2);
   x.fillStyle = '#4d7a3a';
@@ -287,6 +352,10 @@ export function buildMaterials() {
     roof: new THREE.MeshStandardMaterial({ ...surface(roofTexture(), 0.9, 2.6), roughness: 0.86, vertexColors: true }),
     road: new THREE.MeshStandardMaterial({ ...surface(roadTexture(), 0.6, 1.8), roughness: 0.97, vertexColors: true }),
     pavement: new THREE.MeshStandardMaterial({ ...surface(pavementTexture(), 0.7, 2.0), roughness: 0.95, vertexColors: true }),
+    sand: new THREE.MeshStandardMaterial({
+      ...surface(sandTexture(), 0.8, 2.2), roughness: 1.0, vertexColors: true }),
+    putting: new THREE.MeshStandardMaterial({
+      ...surface(greenTexture(), 0.5, 1.4), roughness: 1.0, vertexColors: true }),
     grass: new THREE.MeshStandardMaterial({ map: tex(grassTexture(), 1), roughness: 1.0, vertexColors: true }),
     // scene.environment gives these something to reflect; without it they read
     // as black holes in the wall
@@ -302,7 +371,8 @@ export function buildMaterials() {
     // same trap as `leaf` below: the hedges are instanced boxes coloured with
     // setColorAt, and a plain BoxGeometry carries no colour attribute — asking
     // for vertexColors here renders every hedge as a black slab
-    hedge: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1.0 }),
+    hedge: new THREE.MeshStandardMaterial({
+      ...surface(hedgeTexture(), 1.3, 3.2), color: 0xffffff, roughness: 1.0 }),
     wall: new THREE.MeshStandardMaterial({ color: 0x8d8577, roughness: 0.95, vertexColors: true }),
     dark: new THREE.MeshStandardMaterial({ roughness: 0.8, vertexColors: true }),
     water: new THREE.MeshStandardMaterial({ color: 0x35566b, roughness: 0.16, metalness: 0.4, vertexColors: true }),

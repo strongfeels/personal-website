@@ -77,7 +77,8 @@ function projectExtent(poly, ax, az) {
 }
 
 export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
-                           veg = { trees: [], hedges: [] }) {
+                           veg = { trees: [], hedges: [] },
+                           golf = { courses: [] }) {
   // buildings carrying detected domes are flat-roofed underneath them
   const domed = new Map();
   for (const L of landmarks.landmarks || []) {
@@ -97,7 +98,7 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
   const KEYS = ['redbrick', 'pebbledash', 'render', 'stone', 'brickBuff',
                 'limestone', 'granite', 'roof',
                 'glass', 'trim', 'door', 'road', 'pavement', 'grass', 'hedge',
-                'wall', 'dark', 'water'];
+                'wall', 'dark', 'water', 'sand', 'putting'];
   const makeBuilders = () => {
     const mb = {};
     for (const k of KEYS) mb[k] = new MeshBuilder();
@@ -113,7 +114,7 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
       c = { key, cx: (Math.floor(x / CHUNK) + 0.5) * CHUNK,
             cz: (Math.floor(z / CHUNK) + 0.5) * CHUNK,
             areas: [], water: [], roads: [], paths: [], buildings: [],
-            barriers: [], lamps: [], trees: [], hedges: [], group: null };
+            barriers: [], lamps: [], trees: [], hedges: [], golf: [], group: null };
       cells.set(key, c);
     }
     return c;
@@ -249,6 +250,14 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     for (const run of clipToKerb(p.pts, -1)) {
       ribbon(mb.pavement, run, Math.max(1.3, p.w), 0.09, 3, 0xe8e4d8);
     }
+  }
+
+  function emitGolf(mb, gf) {
+    // 4cm of clearance keeps them off the landuse polygon they sit on; a green
+    // sits a touch higher again so its collar reads against the fairway.
+    const y = gf.kind === 'sand' ? 0.04 : 0.05;
+    const uv = gf.kind === 'sand' ? 0.6 : 1.4;   // metres per texture tile
+    mb[gf.kind].polyFlat(gf.poly, y, uv, 0xffffff);
   }
 
   function emitBuilding(mb, b) {
@@ -558,6 +567,13 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
   // Vegetation streams with everything else: at this size a single instanced
   // mesh for every tree in the map has one bounding sphere, so it can never be
   // culled and the whole forest is drawn every frame.
+  // Golf: OSM maps the course boundary and nothing inside it, so the bunkers
+  // and greens are traced off the imagery instead. They sit a few centimetres
+  // above the grass so there is no z-fighting with the landuse polygon.
+  for (const c of golf.courses || []) {
+    for (const b of c.bunkers || []) cellAt(b.poly[0][0], b.poly[0][1]).golf.push({ kind: 'sand', poly: b.poly });
+    for (const g of c.greens || []) cellAt(g.poly[0][0], g.poly[0][1]).golf.push({ kind: 'putting', poly: g.poly });
+  }
   for (const t of veg.trees || []) cellAt(t.x, t.z).trees.push(t);
   for (const h of veg.hedges || []) cellAt(h.pts[0][0], h.pts[0][1]).hedges.push(h);
   treeColliders(veg.trees || [], colliders);
@@ -575,6 +591,7 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     for (const w of c.water) q.push(() => emitWater(mb, w));
     for (const r of c.roads) q.push(() => emitRoad(mb, r));
     for (const p of c.paths) q.push(() => emitPath(mb, p));
+    for (const gf of c.golf) q.push(() => emitGolf(mb, gf));
     for (const b of c.buildings) q.push(() => emitBuilding(mb, b));
     for (const bar of c.barriers) q.push(() => emitBarrier(mb, bar));
     for (const r of c.lamps) q.push(() => emitLamps(mb, r));

@@ -119,8 +119,10 @@ export function makeHedges(hedges, M) {
     q.setFromEuler(e);
     m.compose(new THREE.Vector3(cx, h / 2, cz), q, new THREE.Vector3(len, h, w));
     mesh.setMatrixAt(i, m);
-    mesh.setColorAt(i, col.setHSL(0.27 + (hash01(i, 7) - 0.5) * 0.04,
-                                  0.42, 0.20 + hash01(i, 8) * 0.07));
+    // darker and more saturated than the original guess, which was chosen
+    // when these rendered black and nobody could see it
+    mesh.setColorAt(i, col.setHSL(0.28 + (hash01(i, 7) - 0.5) * 0.05,
+                                  0.55, 0.085 + hash01(i, 8) * 0.045));
   });
   return [mesh];
 }
