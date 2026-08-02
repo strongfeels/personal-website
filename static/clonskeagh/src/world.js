@@ -602,7 +602,6 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     const [vl, vh] = projectExtent(poly, vx2, vz2);
     const ccx = ux2 * (ul + uh) / 2 + vx2 * (vl + vh) / 2;
     const ccz = uz2 * (ul + uh) / 2 + vz2 * (vl + vh) / 2;
-    const wantX = Math.cos(b.facing), wantZ = Math.sin(b.facing);
     const SHOP = Math.min(3.4, b.h * 0.52);
     const GILT = 0xcbb27a;
 
@@ -618,12 +617,12 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
       const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
       let nx = ez / len, nz = -ex / len;
       if ((mx - ccx) * nx + (mz - ccz) * nz < 0) { nx = -nx; nz = -nz; }
-      const facing = nx * wantX + nz * wantZ;
-      if (facing < 0.15) continue;                  // turned away from the street
-      faces.push({ x: mx, z: mz, nx, nz, tx: ex / len, tz: ez / len, w: len, facing });
+      faces.push({ x: mx, z: mz, nx, nz, tx: ex / len, tz: ez / len, w: len });
     }
     if (!faces.length) return;
-    faces.sort((a, c) => c.facing * c.w - a.facing * a.w);
+    // the widest wall gets the door furniture — a length the building actually
+    // has, rather than a guess about which way it looks
+    faces.sort((a, c) => c.w - a.w);
 
     for (const f of faces) {
       const yaw = Math.atan2(f.nx, -f.nz);
@@ -650,8 +649,8 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
       }
     }
 
-    // The door is on the widest street elevation, and what gathers by a door
-    // gathers there too.
+    // What gathers by a door goes on the widest elevation only, so it doesn't
+    // multiply around the building.
     const f = faces[0];
     const yaw = Math.atan2(f.nx, -f.nz);
     const at = (off, out) => [f.x + f.tx * off + f.nx * out, f.z + f.tz * off + f.nz * out];
