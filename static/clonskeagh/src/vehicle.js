@@ -309,7 +309,11 @@ export class Traffic {
     this.lanes.forEach((l, i) => {
       if (l.kind === 'secondary' || l.kind === 'tertiary') this.busLanes.push(i);
     });
-    const buses = this.busLanes.length ? Math.max(1, Math.round(count / 12)) : 0;
+    // One bus per 60 vehicles rather than per 12 — five times rarer. At 24 cars
+    // that averages 0.4 of a bus, so it has to be a coin rather than a count:
+    // most of the time there is no bus on the road at all, which is the point.
+    const expected = this.busLanes.length ? count / 60 : 0;
+    const buses = Math.floor(expected) + (Math.random() < expected % 1 ? 1 : 0);
 
     for (let i = 0; i < count; i++) {
       const v = i < buses

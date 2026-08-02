@@ -303,7 +303,11 @@ const FITTINGS = {
   // grey pole. No dimension sheet turned up — the NTA's "bus stop pole
   // information note" is a logo file — so these sizes are taken from the
   // proportions and should be read as approximate, not specified.
-  bus_stop:         { post: [0.045, 2.12], head: [0.44, 0.60, 0.05], body: 0x8f959a, face: 0xf0c419, sign: true },
+  // Stainless steel pole — never painted — with a green and yellow flag at the
+  // top and, below it, the yellow plastic carousel that holds the timetable.
+  // The carousel is the round thing you actually notice on a Dublin stop, and
+  // leaving it off left a bare stick with a rectangle on it.
+  bus_stop:         { post: [0.048, 2.30], head: [0.46, 0.56, 0.05], body: 0xacb3b8, face: 0x1f7a3d, sign: true, stop: true },
   // built as a kiosk out of boxes instead — see KIOSK below
   telephone:        { post: null, head: [0.95, 2.30, 0.95], body: 0xd0cbb6, face: 0x2c5c3a, kiosk: true },
 };
@@ -342,6 +346,38 @@ function kioskParts() {
   return out;
 }
 const KIOSK = kioskParts();
+
+const STOP_YELLOW = 0xf2c317, STOP_GREEN = 0x1f7a3d, STOP_STEEL = 0xacb3b8;
+const SHELTER_FRAME = 0x3c4348, SHELTER_ROOF = 0x5b6469;
+
+/**
+ * The rest of a bus stop: the carousel, and a shelter where there is one.
+ *
+ * The carousel is a yellow cylinder clasped round the pole at reading height —
+ * high-visibility plastic, holding the printed timetable. The flag above it is
+ * the green-and-yellow TFI one, which the head instance already draws.
+ *
+ * The shelter is a cantilever: two posts at the back, a flat roof over, a glazed
+ * back panel and one end panel, open to the road. Returned as boxes in local
+ * space where +Z is the road side, matching the fitting's own facing.
+ */
+function busStopExtras(sheltered) {
+  const out = [];
+  // carousel: a drum on the pole, drawn as a squat box — at this size the
+  // difference between a 12-sided drum and a box is not visible, and this way
+  // it rides the heads mesh instead of needing its own
+  out.push([0, 1.32, 0, 0.30, 0.44, 0.30, STOP_YELLOW]);
+  if (!sheltered) return out;
+  const W = 3.9, D = 1.45, H = 2.42;
+  out.push([0, H + 0.06, 0.05, W, 0.12, D + 0.30, SHELTER_ROOF]);          // roof
+  out.push([0, H / 2, D / 2, W, H, 0.06, 0x9fb6c4]);                        // back glazing
+  for (const sx of [-1, 1]) {
+    out.push([sx * (W / 2 - 0.05), H / 2, D / 2 - 0.03, 0.09, H, 0.09, SHELTER_FRAME]);
+  }
+  out.push([-W / 2 + 0.04, H / 2, 0, 0.06, H, D, 0x9fb6c4]);                // one end panel
+  out.push([0, 0.62, D / 2 - 0.22, W - 0.9, 0.07, 0.34, 0xd8b23a]);         // bench, yellow arms
+  return out;
+}
 
 const RECYCLING_COLOUR = {
   glass_bottles: 0x1f6b3a, glass: 0x1f6b3a, clothes: 0x2a4f7a,
@@ -640,7 +676,13 @@ export function makeFurniture(items, M) {
     const specs = fittings.map(fittingSpec);
     const nPosts = specs.filter((s) => s && s.post).length;
     let nHeads = 0;
-    for (const sp of specs) if (sp) nHeads += sp.kiosk ? KIOSK.length : 1;
+    for (let i = 0; i < specs.length; i++) {
+      const sp = specs[i];
+      if (!sp) continue;
+      if (sp.kiosk) { nHeads += KIOSK.length; continue; }
+      nHeads += 1;
+      if (sp.stop) nHeads += busStopExtras(!!fittings[i].shelter).length;
+    }
 
     const postGeo = new THREE.CylinderGeometry(1, 1, 1, 8);
     postGeo.translate(0, 0.5, 0);                       // stands on the ground
@@ -677,6 +719,17 @@ export function makeFurniture(items, M) {
       }
 
       const y0 = f.y || 0;
+      if (spec.stop) {
+        const co2 = Math.cos(theta), si2 = Math.sin(theta);
+        for (const [lx, ly, lz, w, h, d, c] of busStopExtras(!!f.shelter)) {
+          pos.set(f.x + lx * co2 + lz * si2, y0 + ly, f.z - lx * si2 + lz * co2);
+          scl.set(w, h, d);
+          m.compose(pos, q, scl);
+          heads.setMatrixAt(hi, m);
+          heads.setColorAt(hi, col.setHex(c));
+          hi++;
+        }
+      }
       if (spec.kiosk) {
         const co = Math.cos(theta), si = Math.sin(theta);
         for (const [lx, ly, lz, w, h, d, c] of KIOSK) {
