@@ -297,13 +297,51 @@ const FITTINGS = {
   vending_other:    { post: null,         head: [0.62, 1.55, 0.42], body: 0x33383b, face: 0x22262a },
   recycling:        { post: null,         head: [1.55, 1.65, 1.25], body: 0x1f6b3a, face: 0x18512d },
   charging_station: { post: [0.06, 0.55], head: [0.30, 0.80, 0.22], body: 0x2f3438, face: 0x9fd8b4 },
-  clock:            { post: [0.055, 3.05], head: [0.52, 0.52, 0.13], body: 0x1e2124, face: 0xe6e0cf },
-  telephone:        { post: null,         head: [0.95, 2.30, 0.95], body: 0xd0cbb6, face: 0x2c5c3a },
+  clock:            { post: [0.055, 3.05], head: [0.52, 0.52, 0.13], body: 0x1e2124, face: 0xe6e0cf, sign: true },
   drinking_water:   { post: [0.07, 0.80], head: [0.26, 0.18, 0.26], body: 0x8d8b84, face: 0x8d8b84 },
+  // TFI's palette is green, yellow and black and the flag sits near the top of a
+  // grey pole. No dimension sheet turned up — the NTA's "bus stop pole
+  // information note" is a logo file — so these sizes are taken from the
+  // proportions and should be read as approximate, not specified.
+  bus_stop:         { post: [0.045, 2.12], head: [0.44, 0.60, 0.05], body: 0x8f959a, face: 0xf0c419, sign: true },
+  // built as a kiosk out of boxes instead — see KIOSK below
+  telephone:        { post: null, head: [0.95, 2.30, 0.95], body: 0xd0cbb6, face: 0x2c5c3a, kiosk: true },
 };
 
 const FITTING_KINDS = new Set(['vending_machine', 'recycling', 'charging_station',
-                               'clock', 'telephone', 'drinking_water']);
+                               'clock', 'telephone', 'drinking_water', 'bus_stop']);
+
+/**
+ * A phone kiosk, as boxes.
+ *
+ * It was one cream cuboid, which is not a phone box — it is a fridge. An Irish
+ * kiosk is a frame: dark posts at the corners, a deep sign band over the door, a
+ * plinth, and cream panels filling three sides with the front left open. The
+ * open front and the visible frame are what make it read as a kiosk at all.
+ *
+ * [lx, ly, lz, w, h, d, colour] in the fitting's own local space, so these ride
+ * the heads mesh that is already being drawn and cost no extra draw call.
+ */
+const KIOSK_FRAME = 0x1f4a2e, KIOSK_PANEL = 0xd8d3bf;
+function kioskParts() {
+  const W = 0.90, H = 2.42, P = 0.075, half = W / 2;
+  const panelY = 0.12 + (H - 0.2) / 2, panelH = H - 0.2;
+  const out = [[0, 0.06, 0, W + 0.08, 0.12, W + 0.08, KIOSK_FRAME]];      // plinth
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      out.push([sx * (half - P / 2), H / 2, sz * (half - P / 2), P, H, P, KIOSK_FRAME]);
+    }
+  }
+  out.push([0, panelY, half - 0.03, W - P * 2, panelH, 0.05, KIOSK_PANEL]);   // back
+  for (const sx of [-1, 1]) {
+    out.push([sx * (half - 0.03), panelY, 0, 0.05, panelH, W - P * 2, KIOSK_PANEL]);
+    // the pair flanking the door, leaving the middle of the front open
+    out.push([sx * (half - 0.16), panelY, -(half - 0.03), 0.22, panelH, 0.05, KIOSK_PANEL]);
+  }
+  out.push([0, H + 0.12, 0, W + 0.10, 0.24, W + 0.10, KIOSK_FRAME]);      // sign band
+  return out;
+}
+const KIOSK = kioskParts();
 
 const RECYCLING_COLOUR = {
   glass_bottles: 0x1f6b3a, glass: 0x1f6b3a, clothes: 0x2a4f7a,
@@ -389,7 +427,7 @@ export function makeFurniture(items, M) {
       const co = Math.cos(theta), si = Math.sin(theta);
       // local (lx, ly, lz) -> world, matching the rotation above
       const place = (lx, ly, lz, sx, sy, sz, colour, tilt) => {
-        pos.set(b.x + lx * co + lz * si, ly, b.z - lx * si + lz * co);
+        pos.set(b.x + lx * co + lz * si, (b.y || 0) + ly, b.z - lx * si + lz * co);
         scl.set(sx, sy, sz);
         if (tilt) {
           const t = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), tilt);
@@ -483,7 +521,7 @@ export function makeFurniture(items, M) {
       const named = NAMED[(f.col || '').trim().toLowerCase()];
       if (named !== undefined) bodyCol = named;     // the band stays gold
 
-      pos.set(f.x, 0, f.z);
+      pos.set(f.x, f.y || 0, f.z);
       scl.set(s, s, s);
       m.compose(pos, up, scl);
       shell.setMatrixAt(i, m); band.setMatrixAt(i, m);
@@ -535,7 +573,7 @@ export function makeFurniture(items, M) {
       const tint = f.covered ? 0x3c4247 : 0x9aa1a6;
       for (let k = 0; k < n; k++) {
         const lz = (k - (n - 1) / 2) * HOOP_GAP;
-        pos.set(f.x + lz * si, 0, f.z + lz * co);
+        pos.set(f.x + lz * si, f.y || 0, f.z + lz * co);
         m.compose(pos, q, one);
         mesh.setMatrixAt(i, m);
         mesh.setColorAt(i, col.setHex(tint).multiplyScalar(0.94 + hash01(ri * 31 + k, 13) * 0.12));
@@ -580,7 +618,7 @@ export function makeFurniture(items, M) {
       // theta = -(face - PI/2), local +Z lands on `face`
       const theta = -(f.face ?? 0) + Math.PI / 2;
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), theta);
-      pos.set(f.x, 0, f.z);
+      pos.set(f.x, f.y || 0, f.z);
       m.compose(pos, q, one);
       body.setMatrixAt(i, m); slot.setMatrixAt(i, m);
       const named = NAMED[(f.col || '').trim().toLowerCase()];
@@ -601,7 +639,8 @@ export function makeFurniture(items, M) {
     // the same geometry.
     const specs = fittings.map(fittingSpec);
     const nPosts = specs.filter((s) => s && s.post).length;
-    const nHeads = specs.filter(Boolean).length;
+    let nHeads = 0;
+    for (const sp of specs) if (sp) nHeads += sp.kiosk ? KIOSK.length : 1;
 
     const postGeo = new THREE.CylinderGeometry(1, 1, 1, 8);
     postGeo.translate(0, 0.5, 0);                       // stands on the ground
@@ -629,7 +668,7 @@ export function makeFurniture(items, M) {
 
       if (spec.post) {
         const [r, h] = spec.post;
-        pos.set(f.x, 0, f.z);
+        pos.set(f.x, f.y || 0, f.z);
         scl.set(r * 2, h, r * 2);
         m.compose(pos, q, scl);
         posts.setMatrixAt(pi, m);
@@ -637,17 +676,28 @@ export function makeFurniture(items, M) {
         pi++;
       }
 
+      const y0 = f.y || 0;
+      if (spec.kiosk) {
+        const co = Math.cos(theta), si = Math.sin(theta);
+        for (const [lx, ly, lz, w, h, d, c] of KIOSK) {
+          pos.set(f.x + lx * co + lz * si, y0 + ly, f.z - lx * si + lz * co);
+          scl.set(w, h, d);
+          m.compose(pos, q, scl);
+          heads.setMatrixAt(hi, m);
+          heads.setColorAt(hi, col.setHex(c).multiplyScalar(0.96 + hash01(i, 23) * 0.07));
+          hi++;
+        }
+        return;
+      }
       const [w, h, d] = spec.head;
       const base = spec.post ? spec.post[1] : 0;
-      pos.set(f.x, base + h / 2, f.z);
+      pos.set(f.x, y0 + base + h / 2, f.z);
       scl.set(w, h, d);
       m.compose(pos, q, scl);
       heads.setMatrixAt(hi, m);
-      // the clock's dial and the charger's screen are the reason `face` matters,
-      // but a box only has one colour — give the head the face colour where the
-      // fitting is basically all face, and the body colour otherwise
-      const flat = f.kind === 'clock';
-      heads.setColorAt(hi, col.setHex(flat ? spec.face : bodyCol)
+      // a box carries one colour, so a fitting that is basically all face — a
+      // clock dial, a bus stop flag — takes the face colour, the rest the body
+      heads.setColorAt(hi, col.setHex(spec.sign ? spec.face : bodyCol)
         .multiplyScalar(0.94 + hash01(i, 23) * 0.1));
       hi++;
     });

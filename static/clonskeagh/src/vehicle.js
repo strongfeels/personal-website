@@ -178,6 +178,79 @@ function pointAt(lane, t) {
           pts[lo][1] + (pts[hi][1] - pts[lo][1]) * f];
 }
 
+export const BUS = { len: 10.9, wid: 2.52, high: 4.35, wheelR: 0.47 };
+
+// Current TFI livery is yellow with acid green and black; it replaced the
+// yellow-and-blue that ran for over a decade, and the repaint is gradual, so a
+// few of the old ones are still about.
+const BUS_LIVERY = [
+  { body: 0xf2c317, skirt: 0x7ab800 },
+  { body: 0xf2c317, skirt: 0x7ab800 },
+  { body: 0xf2c317, skirt: 0x7ab800 },
+  { body: 0xf5c518, skirt: 0x11317a },   // the old blue
+];
+const BUS_BLACK = new THREE.MeshStandardMaterial({ color: 0x17181a, roughness: 0.72 });
+const BUS_ROOF = new THREE.MeshStandardMaterial({ color: 0xb9bcbe, roughness: 0.85 });
+
+/**
+ * A Dublin double-decker: 10.9m long, 2.52m wide, 4.35m to the roof.
+ *
+ * Built as slabs rather than a moulded shell — at any distance you actually see
+ * one, the silhouette and the livery bands are what read, and a box with the
+ * right proportions and the right stripe is a bus. Returned in makeCar's shape
+ * so the traffic loop can drive it without knowing which it has.
+ */
+export function makeBus(seed = 0) {
+  const g = new THREE.Group();
+  const L = BUS.len, W = BUS.wid, H = BUS.high;
+  const liv = BUS_LIVERY[Math.floor(hash01(seed, 11) * BUS_LIVERY.length) % BUS_LIVERY.length];
+  const paint = new THREE.MeshStandardMaterial({ color: liv.body, roughness: 0.42, metalness: 0.15 });
+  const skirt = new THREE.MeshStandardMaterial({ color: liv.skirt, roughness: 0.45, metalness: 0.1 });
+
+  const add = (w, h, d, x, y, z, mat) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z);
+    m.castShadow = m.receiveShadow = true;
+    g.add(m);
+    return m;
+  };
+
+  add(W, H - 0.62, L, 0, 0.62 + (H - 0.62) / 2, 0, paint);          // body
+  add(W + 0.015, 0.42, L, 0, 0.83, 0, skirt);                        // skirt band
+  add(W - 0.16, 0.16, L - 0.5, 0, H - 0.06, 0, BUS_ROOF);            // roof
+
+  // glazing: a band per deck, plus a windscreen on each at the front
+  add(W + 0.02, 0.78, L - 1.35, 0, 1.72, -0.1, CAR_GLASS);
+  add(W + 0.02, 0.92, L - 1.15, 0, 3.28, -0.05, CAR_GLASS);
+  add(W - 0.18, 0.86, 0.08, 0, 1.76, L / 2 + 0.01, CAR_GLASS);
+  add(W - 0.18, 1.02, 0.08, 0, 3.24, L / 2 + 0.01, CAR_GLASS);
+  add(W - 0.34, 0.30, 0.06, 0, 3.92, L / 2 + 0.02, BUS_BLACK);       // destination blind
+  add(W + 0.02, 0.14, L - 1.35, 0, 2.36, -0.1, BUS_BLACK);           // deck line
+
+  for (const s of [-1, 1]) {
+    const f = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.16, 0.08), CAR_LAMP_F);
+    f.position.set(s * (W / 2 - 0.32), 0.72, L / 2 + 0.01);
+    const r = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.16, 0.08), CAR_LAMP_R);
+    r.position.set(s * (W / 2 - 0.3), 0.78, -L / 2 - 0.01);
+    g.add(f, r);
+  }
+
+  // one axle at the front, a doubled one at the back
+  const wheels = [];
+  const tyre = new THREE.CylinderGeometry(BUS.wheelR, BUS.wheelR, 0.26, 12);
+  tyre.rotateZ(Math.PI / 2);
+  for (const zz of [L / 2 - 1.9, -L / 2 + 2.6, -L / 2 + 1.55]) {
+    for (const s of [-1, 1]) {
+      const wm = new THREE.Mesh(tyre, CAR_TYRE);
+      wm.position.set(s * (W / 2 - 0.14), BUS.wheelR, zz);
+      wm.castShadow = true;
+      g.add(wm);
+      wheels.push(wm);
+    }
+  }
+  return { group: g, wheels, wheelR: BUS.wheelR, big: true };
+}
+
 export function buildLanes(world) {
   const lanes = [];
   for (const r of world.roads) {
@@ -188,6 +261,7 @@ export function buildLanes(world) {
     if (fwd.len < 12) continue;
     fwd.speed = rev.speed = r.kind === 'residential' ? 8.5 : 12.0;
     fwd.name = rev.name = r.name;
+    fwd.kind = rev.kind = r.kind;
     lanes.push(fwd, rev);
     fwd.pair = lanes.length - 1;      // index of rev
     rev.pair = lanes.length - 2;
@@ -228,11 +302,22 @@ export class Traffic {
     this.cars = [];
     if (!this.lanes.length) return;
 
+    // Buses run the through-roads only, and there are one or two in the whole
+    // simulation — a double-decker down every residential cul-de-sac is both
+    // wrong and far more noticeable than a wrong car.
+    this.busLanes = [];
+    this.lanes.forEach((l, i) => {
+      if (l.kind === 'secondary' || l.kind === 'tertiary') this.busLanes.push(i);
+    });
+    const buses = this.busLanes.length ? Math.max(1, Math.round(count / 12)) : 0;
+
     for (let i = 0; i < count; i++) {
-      const car = makeCar(BODY_COLOURS[Math.floor(hash01(seed + i, 3) * BODY_COLOURS.length)],
-        seed + i, true);
-      scene.add(car.group);
-      const c = { ...car, lane: 0, t: 0, speed: 0, target: 8, yaw: 0, spin: 0, stuck: 0 };
+      const v = i < buses
+        ? makeBus(seed + i)
+        : makeCar(BODY_COLOURS[Math.floor(hash01(seed + i, 3) * BODY_COLOURS.length)],
+          seed + i, true);
+      scene.add(v.group);
+      const c = { ...v, lane: 0, t: 0, speed: 0, target: 8, yaw: 0, spin: 0, stuck: 0 };
       this.cars.push(c);
       this.place(c, { x: 0, z: 0 }, null, 20, 220);
     }
@@ -246,8 +331,10 @@ export class Traffic {
    */
   place(c, at, forward, minD, maxD) {
     let best = null, bestErr = Infinity;
+    const pool = c.big ? this.busLanes : null;
     for (let k = 0; k < 24; k++) {
-      const li = Math.floor(Math.random() * this.lanes.length);
+      const li = pool ? pool[Math.floor(Math.random() * pool.length)]
+        : Math.floor(Math.random() * this.lanes.length);
       const lane = this.lanes[li];
       const t = Math.random() * lane.len;
       const [x, z] = pointAt(lane, t);
@@ -265,7 +352,8 @@ export class Traffic {
     c.lane = li;
     c.t = t;
     c.speed = lane.speed * 0.7;
-    c.target = lane.speed * (0.8 + Math.random() * 0.35);
+    // heavier, stops more; a bus should never be the quick thing on the road
+    c.target = lane.speed * (c.big ? 0.62 + Math.random() * 0.2 : 0.8 + Math.random() * 0.35);
     return true;
   }
 
@@ -330,7 +418,8 @@ export class Traffic {
           c.lane = lane.pair !== undefined ? lane.pair : c.lane;   // dead end: come back
         }
         c.t = over;
-        c.target = this.lanes[c.lane].speed * (0.8 + Math.random() * 0.35);
+        c.target = this.lanes[c.lane].speed
+          * (c.big ? 0.62 + Math.random() * 0.2 : 0.8 + Math.random() * 0.35);
       }
 
       const lane2 = this.lanes[c.lane];
@@ -346,16 +435,31 @@ export class Traffic {
       c.group.position.set(x, 0, z);
       c.group.rotation.y = c.yaw;
 
-      c.spin += c.speed * dt / CAR.wheelR;
+      c.spin += c.speed * dt / (c.wheelR || CAR.wheelR);
       for (const w of c.wheels) w.rotation.x = c.spin;
 
       c.group.visible = Math.hypot(x - playerPos.x, z - playerPos.z) < SEE;
     }
   }
 
-  /** Positions, so the player's car can be avoided and vice versa. */
+  /**
+   * Positions, so the player's car can be avoided and vice versa.
+   *
+   * Avoidance works on points, and a bus is 10.9m long — reported as a single
+   * point you could drive clean through both ends of it. So a bus reports three
+   * along its length and behaves like the obstacle it actually is.
+   */
   positions() {
-    return this.cars.map((c) => ({ x: c.group.position.x, z: c.group.position.z }));
+    const out = [];
+    for (const c of this.cars) {
+      const { x, z } = c.group.position;
+      out.push({ x, z });
+      if (!c.big) continue;
+      const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw), d = BUS.len * 0.33;
+      out.push({ x: x + fx * d, z: z + fz * d });
+      out.push({ x: x - fx * d, z: z - fz * d });
+    }
+    return out;
   }
 }
 

@@ -194,10 +194,12 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     grounds: [M.grass, 0x9dc584, 0.02],
     construction: [M.pavement, 0xa79880, 0.04], parking: [M.road, 0x9a9a9a, 0.05],
     parking_space: [M.road, 0xa5a5a5, 0.06],
-    // Water sits above every other ground layer. A lake is nearly always inside
-    // a park or a set of grounds, and at 0.02 the grass covering it was drawn a
-    // centimetre higher — UCD's Upper Lake was a field.
-    water: [M.water, 0xffffff, 0.075],
+    // Water goes above the grass layers and BELOW the tarmac. At 0.02 the park
+    // grass covering a lake was drawn a centimetre higher and UCD's Upper Lake
+    // was a field; raising it to 0.075 fixed that but overshot the road at 0.06,
+    // so every bridge over the Dodder had a river painted across it. 0.055 sits
+    // above the highest grass (pitch, 0.04) and under the carriageway.
+    water: [M.water, 0xffffff, 0.055],
   };
 
   // Nearest road point per building — it decides where the garden path runs and
@@ -1183,7 +1185,7 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
   // stream as everything else rather than being one mesh over the whole map.
   const FURNITURE = new Set(['bench', 'waste_basket', 'bicycle_parking', 'post_box',
                             'vending_machine', 'recycling', 'charging_station',
-                            'clock', 'telephone', 'drinking_water']);
+                            'clock', 'telephone', 'drinking_water', 'bus_stop']);
   // `indoor` bins are inside a building the game has no interior for, so drawing
   // them puts a bin in the middle of the street.
   const street = (world.pois || []).filter((p) => FURNITURE.has(p.kind) && !p.indoor);
