@@ -1181,7 +1181,9 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
   // Benches and bins have been in the baked POIs all along without ever being
   // drawn. They are small and there are only 294, so they ride the same chunk
   // stream as everything else rather than being one mesh over the whole map.
-  const FURNITURE = new Set(['bench', 'waste_basket']);
+  const FURNITURE = new Set(['bench', 'waste_basket', 'bicycle_parking', 'post_box',
+                            'vending_machine', 'recycling', 'charging_station',
+                            'clock', 'telephone', 'drinking_water']);
   // `indoor` bins are inside a building the game has no interior for, so drawing
   // them puts a bin in the middle of the street.
   const street = (world.pois || []).filter((p) => FURNITURE.has(p.kind) && !p.indoor);

@@ -199,10 +199,11 @@ export function addCars(world, scene, colliders) {
 }
 
 // ------------------------------------------------------------ street furniture
-// 158 benches and 136 waste baskets, all of which OSM has been carrying and the
-// game has never drawn. The tags are unusually good for street furniture — four
-// benches in five say whether they have a backrest, a third name their material
-// — so these vary rather than being one model stamped 294 times.
+// 158 benches, 136 waste baskets, 114 bike racks and 66 post boxes, all of which
+// OSM has been carrying and the game never drew. The tags are unusually good for
+// street furniture — four benches in five say whether they have a backrest, and
+// 87 racks give a capacity — so these vary rather than being one model stamped
+// 474 times.
 //
 // What OSM does not say is which way they point: one bench in 158 has
 // `direction`. The bake infers it from the path beside them and writes `face`,
@@ -265,6 +266,58 @@ function benchLength(b) {
   return n ? Math.max(1.1, Math.min(3.2, n * 0.52)) : 1.75;
 }
 
+/**
+ * Hoops in a Sheffield stand. `capacity` counts BIKES and one hoop takes two,
+ * so a capacity of 10 is five hoops, not ten. Getting that wrong would double
+ * the length of every rack in UCD.
+ */
+function hoopCount(f) {
+  if (f.cap) return Math.max(1, Math.min(14, Math.round(f.cap / 2)));
+  return 3;
+}
+
+const HOOP_GAP = 0.8;                 // centres, metres
+const HOOP_W = 0.75, HOOP_H = 0.78;   // a Sheffield stand is about this
+const BOX_H = 1.35, BOX_R = 0.30;     // pillar box, Type B proportions
+
+/**
+ * The rest of the street fittings.
+ *
+ * Ticket machines, bottle banks, EV chargers, street clocks, phone boxes and
+ * drinking fountains are all the same two shapes: an optional post with a box
+ * on top. Describing them as data rather than as six builders means they cost
+ * two draw calls between them instead of a dozen.
+ *
+ * post: [radius, height] or null.  head: [width, height, depth].
+ * The head sits directly on the post, or on the ground where there isn't one.
+ */
+const FITTINGS = {
+  // 50 of the 52 outdoor "vending machines" are pay-and-display posts
+  parking_tickets:  { post: [0.05, 0.95], head: [0.34, 0.62, 0.24], body: 0x35393c, face: 0x22262a },
+  vending_other:    { post: null,         head: [0.62, 1.55, 0.42], body: 0x33383b, face: 0x22262a },
+  recycling:        { post: null,         head: [1.55, 1.65, 1.25], body: 0x1f6b3a, face: 0x18512d },
+  charging_station: { post: [0.06, 0.55], head: [0.30, 0.80, 0.22], body: 0x2f3438, face: 0x9fd8b4 },
+  clock:            { post: [0.055, 3.05], head: [0.52, 0.52, 0.13], body: 0x1e2124, face: 0xe6e0cf },
+  telephone:        { post: null,         head: [0.95, 2.30, 0.95], body: 0xd0cbb6, face: 0x2c5c3a },
+  drinking_water:   { post: [0.07, 0.80], head: [0.26, 0.18, 0.26], body: 0x8d8b84, face: 0x8d8b84 },
+};
+
+const FITTING_KINDS = new Set(['vending_machine', 'recycling', 'charging_station',
+                               'clock', 'telephone', 'drinking_water']);
+
+const RECYCLING_COLOUR = {
+  glass_bottles: 0x1f6b3a, glass: 0x1f6b3a, clothes: 0x2a4f7a,
+  cans: 0x7c8288, paper: 0x2f4f7a,
+};
+
+/** Which entry in FITTINGS describes this POI. */
+function fittingSpec(f) {
+  if (f.kind !== 'vending_machine') return FITTINGS[f.kind];
+  // the `vending` tag is the whole point: a parking-ticket post is not a
+  // vending machine and drawing it as one would be the obvious mistake here
+  return f.vend === 'parking_tickets' ? FITTINGS.parking_tickets : FITTINGS.vending_other;
+}
+
 export function furnitureColliders(items, colliders) {
   // `soft` for the same reason trees are: being unable to walk through a bench
   // is right, having the camera shoved off it is not.
@@ -272,6 +325,24 @@ export function furnitureColliders(items, colliders) {
     if (f.kind === 'bench') {
       colliders.push({ x: f.x, z: f.z, hx: benchLength(f) / 2 + 0.05, hz: 0.34,
                        yaw: (f.face ?? 0) + Math.PI / 2, soft: true, h: 0.88 });
+    } else if (f.kind === 'bicycle_parking') {
+      // one box round the whole rack; the gaps between hoops are not worth
+      // resolving and walking through a rack of bikes should not be possible
+      const run = (hoopCount(f) - 1) * HOOP_GAP;
+      colliders.push({ x: f.x, z: f.z, hx: HOOP_W / 2 + 0.1, hz: run / 2 + 0.2,
+                       yaw: f.face ?? 0, soft: true, h: HOOP_H });
+    } else if (f.kind === 'post_box') {
+      colliders.push({ x: f.x, z: f.z, hx: BOX_R, hz: BOX_R, yaw: 0, soft: true, h: BOX_H });
+    } else if (FITTING_KINDS.has(f.kind)) {
+      const spec = fittingSpec(f);
+      if (!spec) continue;
+      const [w, h, d] = spec.head;
+      const top = (spec.post ? spec.post[1] : 0) + h;
+      // a street clock is a pole you walk under, so block the pole, not the dial
+      const wide = spec.post ? Math.max(0.12, spec.post[0] * 2) : w / 2;
+      const deep = spec.post ? Math.max(0.12, spec.post[0] * 2) : d / 2;
+      colliders.push({ x: f.x, z: f.z, hx: wide, hz: deep,
+                       yaw: f.face ?? 0, soft: true, h: Math.min(top, 2.4) });
     } else {
       colliders.push({ x: f.x, z: f.z, hx: 0.25, hz: 0.25, yaw: 0, soft: true, h: 1.11 });
     }
@@ -279,7 +350,7 @@ export function furnitureColliders(items, colliders) {
 }
 
 /**
- * One chunk's benches and baskets.
+ * One chunk's street furniture.
  *
  * Local space for a bench is +X along the seat and +Z behind the sitter's back.
  * Three's rotation about Y sends local +X to world angle -theta, so putting the
@@ -288,8 +359,13 @@ export function furnitureColliders(items, colliders) {
 export function makeFurniture(items, M) {
   if (!items || !items.length) return [];
 
+  // Select each kind by name. This used to take bins as "everything that is not
+  // a bench", which quietly turns every new kind added here into a waste bin.
   const benches = items.filter((f) => f.kind === 'bench');
-  const bins = items.filter((f) => f.kind !== 'bench');
+  const bins = items.filter((f) => f.kind === 'waste_basket');
+  const racks = items.filter((f) => f.kind === 'bicycle_parking');
+  const boxes_ = items.filter((f) => f.kind === 'post_box');
+  const fittings = items.filter((f) => FITTING_KINDS.has(f.kind));
   const out = [];
 
   if (benches.length) {
@@ -340,8 +416,11 @@ export function makeFurniture(items, M) {
       place(-legX, SEAT_Y / 2, 0, 0.07, SEAT_Y, 0.4, metal);          // legs
       place(legX, SEAT_Y / 2, 0, 0.07, SEAT_Y, 0.4, metal);
       if (b.back) {
-        // leaned back a little; the tilt is about local X, which is the seat line
-        place(0, 0.71, 0.20, L, 0.42, 0.055, wood, -0.16);
+        // Reclined a little, about local X — the seat line. The sign matters and
+        // was wrong: rotating by -0.16 sends the TOP of the slab to negative z,
+        // which is the sitter's side, so the backrest tipped forward over the
+        // seat. Positive leans it back, which is what a bench actually does.
+        place(0, 0.71, 0.20, L, 0.42, 0.055, wood, 0.16);
       }
       if (b.arm) {
         place(-L / 2 + 0.03, 0.63, 0.02, 0.05, 0.05, 0.42, metal);
@@ -419,6 +498,168 @@ export function makeFurniture(items, M) {
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
     out.push(shell, band);
+  }
+
+  if (racks.length) {
+    // A Sheffield stand is an arch: two straight legs and a half-round top. The
+    // arch plane faces along the row, because bikes park in the gaps BETWEEN
+    // hoops, side-on to the footpath — so the hoops are spaced along the path
+    // and each one stands across it.
+    const R = HOOP_W / 2, TUBE = 0.027, LEG = HOOP_H - R;
+    const leg = new THREE.CylinderGeometry(TUBE, TUBE, LEG, 7);
+    leg.translate(0, LEG / 2, 0);
+    const legL = leg.clone(); legL.translate(-R, 0, 0);
+    const legR = leg.clone(); legR.translate(R, 0, 0);
+    const arch = new THREE.TorusGeometry(R, TUBE, 6, 10, Math.PI);
+    arch.translate(0, LEG, 0);
+    const hoopGeo = mergeGeo([legL, legR, arch]);
+
+    let total = 0;
+    for (const f of racks) total += hoopCount(f);
+    const mesh = new THREE.InstancedMesh(hoopGeo, M.furniture, total);
+    mesh.castShadow = true;
+
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+    const pos = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
+    const col = new THREE.Color();
+    let i = 0;
+    racks.forEach((f, ri) => {
+      const face = f.face ?? 0;
+      // theta = -face puts local +X along `face` (the arch spans across the
+      // path) and local +Z along face+90 (the row runs along it)
+      const theta = -face;
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), theta);
+      const co = Math.cos(theta), si = Math.sin(theta);
+      const n = hoopCount(f);
+      // galvanised on the street, black where somebody has painted them
+      const tint = f.covered ? 0x3c4247 : 0x9aa1a6;
+      for (let k = 0; k < n; k++) {
+        const lz = (k - (n - 1) / 2) * HOOP_GAP;
+        pos.set(f.x + lz * si, 0, f.z + lz * co);
+        m.compose(pos, q, one);
+        mesh.setMatrixAt(i, m);
+        mesh.setColorAt(i, col.setHex(tint).multiplyScalar(0.94 + hash01(ri * 31 + k, 13) * 0.12));
+        i++;
+      }
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    out.push(mesh);
+  }
+
+  if (boxes_.length) {
+    // An Post pillar box. Green since 1922, and that part is certain; the
+    // proportions are the usual Type B figures (about 1.35m to the cap, 0.6m
+    // across) rather than a spec I could find published, so treat the size as
+    // close rather than exact.
+    const barrel = new THREE.CylinderGeometry(BOX_R, BOX_R, BOX_H - 0.18, 12);
+    barrel.translate(0, (BOX_H - 0.18) / 2, 0);
+    const collar = new THREE.CylinderGeometry(BOX_R + 0.025, BOX_R + 0.025, 0.05, 12);
+    collar.translate(0, BOX_H - 0.18, 0);
+    // the cap is a squashed dome, not a cone — flatten a sphere rather than
+    // taper a cylinder, or it reads as a pencil
+    const cap = new THREE.SphereGeometry(BOX_R + 0.02, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+    cap.scale(1, 0.55, 1);
+    cap.translate(0, BOX_H - 0.155, 0);
+    const bodyGeo = mergeGeo([barrel, collar, cap]);
+
+    // the aperture: a dark slot on the side that faces the street
+    const slotGeo = new THREE.BoxGeometry(0.32, 0.055, 0.06);
+    slotGeo.translate(0, 1.0, BOX_R - 0.01);
+
+    const body = new THREE.InstancedMesh(bodyGeo, M.furniture, boxes_.length);
+    const slot = new THREE.InstancedMesh(slotGeo, M.furniture, boxes_.length);
+    body.castShadow = slot.castShadow = true;
+    body.receiveShadow = true;
+
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+    const pos = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
+    const col = new THREE.Color();
+    boxes_.forEach((f, i) => {
+      // the slot sits at local +Z, so local +Z must point at the street: with
+      // theta = -(face - PI/2), local +Z lands on `face`
+      const theta = -(f.face ?? 0) + Math.PI / 2;
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), theta);
+      pos.set(f.x, 0, f.z);
+      m.compose(pos, q, one);
+      body.setMatrixAt(i, m); slot.setMatrixAt(i, m);
+      const named = NAMED[(f.col || '').trim().toLowerCase()];
+      const green = named !== undefined ? named : 0x1c5c34;   // An Post green
+      body.setColorAt(i, col.setHex(green).multiplyScalar(0.95 + hash01(i, 17) * 0.1));
+      slot.setColorAt(i, col.setHex(0x14181a));
+    });
+    for (const mesh of [body, slot]) {
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
+    out.push(body, slot);
+  }
+
+  if (fittings.length) {
+    // One posts mesh and one heads mesh for all six kinds. Both are unit shapes
+    // scaled per instance, so a 3m clock pole and a 0.55m charger stem come off
+    // the same geometry.
+    const specs = fittings.map(fittingSpec);
+    const nPosts = specs.filter((s) => s && s.post).length;
+    const nHeads = specs.filter(Boolean).length;
+
+    const postGeo = new THREE.CylinderGeometry(1, 1, 1, 8);
+    postGeo.translate(0, 0.5, 0);                       // stands on the ground
+    const posts = nPosts
+      ? new THREE.InstancedMesh(postGeo, M.furniture, nPosts) : null;
+    const heads = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), M.furniture, nHeads);
+    if (posts) posts.castShadow = true;
+    heads.castShadow = heads.receiveShadow = true;
+
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+    const pos = new THREE.Vector3(), scl = new THREE.Vector3();
+    const col = new THREE.Color();
+    let pi = 0, hi = 0;
+
+    fittings.forEach((f, i) => {
+      const spec = specs[i];
+      if (!spec) return;
+      // local +Z has to land on `face` so the screen, dial or slot looks at the
+      // street; rotation about Y sends local +Z to PI/2 - theta
+      const theta = Math.PI / 2 - (f.face ?? 0);
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), theta);
+
+      let bodyCol = spec.body;
+      if (f.kind === 'recycling') bodyCol = RECYCLING_COLOUR[f.rec] ?? spec.body;
+
+      if (spec.post) {
+        const [r, h] = spec.post;
+        pos.set(f.x, 0, f.z);
+        scl.set(r * 2, h, r * 2);
+        m.compose(pos, q, scl);
+        posts.setMatrixAt(pi, m);
+        posts.setColorAt(pi, col.setHex(spec.body).multiplyScalar(0.94 + hash01(i, 19) * 0.1));
+        pi++;
+      }
+
+      const [w, h, d] = spec.head;
+      const base = spec.post ? spec.post[1] : 0;
+      pos.set(f.x, base + h / 2, f.z);
+      scl.set(w, h, d);
+      m.compose(pos, q, scl);
+      heads.setMatrixAt(hi, m);
+      // the clock's dial and the charger's screen are the reason `face` matters,
+      // but a box only has one colour — give the head the face colour where the
+      // fitting is basically all face, and the body colour otherwise
+      const flat = f.kind === 'clock';
+      heads.setColorAt(hi, col.setHex(flat ? spec.face : bodyCol)
+        .multiplyScalar(0.94 + hash01(i, 23) * 0.1));
+      hi++;
+    });
+
+    if (posts) {
+      posts.instanceMatrix.needsUpdate = true;
+      if (posts.instanceColor) posts.instanceColor.needsUpdate = true;
+      out.push(posts);
+    }
+    heads.instanceMatrix.needsUpdate = true;
+    if (heads.instanceColor) heads.instanceColor.needsUpdate = true;
+    out.push(heads);
   }
 
   return out;

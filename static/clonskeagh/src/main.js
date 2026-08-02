@@ -147,6 +147,13 @@ async function boot() {
   const frontage = await fetch('./frontage.json')
     .then((r) => (r.ok ? r.json() : { frontages: [] }))
     .catch(() => ({ frontages: [] }));
+  // Surveyed trees the detector never found — a third of what OSM records had
+  // no detected tree within 6m, and the imagery says there is one there. Kept in
+  // its own file so re-running detect_vegetation.py can't quietly drop them.
+  const osmTrees = await fetch('./osm_trees.json')
+    .then((r) => (r.ok ? r.json() : { trees: [] }))
+    .catch(() => ({ trees: [] }));
+  veg.trees = (veg.trees || []).concat(osmTrees.trees || []);
 
   hud.loadingText.textContent = 'Mixing mortar…';
   await frame();
