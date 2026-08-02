@@ -156,7 +156,9 @@ async function boot() {
     touch = new TouchControls((action) => {
       if (action === 'car') {
         if (drive) exitCar(); else enterCar();
-        touch.setDriving(!!drive);
+      } else if (action === 'view') {
+        controller.firstPerson = !controller.firstPerson;
+        touch.setFirstPerson(controller.firstPerson);
       }
     });
   }
@@ -421,6 +423,7 @@ function enterCar() {
   drive.place(x, z, yaw);
   controller.p.group.visible = false;
   controller.camYaw = yaw + Math.PI;
+  if (touch) touch.setDriving(true);      // Run and Jump make no sense in a car
   return true;
 }
 
@@ -432,6 +435,7 @@ function exitCar() {
   controller.speed = 0;
   controller.p.group.visible = true;
   drive = null;
+  if (touch) touch.setDriving(false);
 }
 
 function driveCamera(dt) {
@@ -487,7 +491,10 @@ addEventListener('keydown', (e) => {
   }
   if (e.code === 'KeyE') { if (drive) exitCar(); else enterCar(); }
   if (e.code === 'KeyN') applySky(skyMode === 'day' ? 'dusk' : skyMode === 'dusk' ? 'night' : 'day');
-  if (e.code === 'KeyF') controller.firstPerson = !controller.firstPerson;
+  if (e.code === 'KeyF') {
+    controller.firstPerson = !controller.firstPerson;
+    if (touch) touch.setFirstPerson(controller.firstPerson);
+  }
   if (e.code === 'KeyM') hud.minimap.classList.toggle('big');
   if (e.code === 'KeyC') document.getElementById('help').classList.toggle('gone');
   if (e.code === 'KeyR') {

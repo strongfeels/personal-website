@@ -86,6 +86,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14;
 }
 .t-btn.t-wide { width: 148px; height: 48px; border-radius: 24px; }
 .t-btn.on { background: rgba(255,209,102,.32); border-color: rgba(255,209,102,.6); }
+/* a toggle that is currently on, as opposed to being pressed right now */
+.t-btn.active { background: rgba(126,196,255,.26); border-color: rgba(126,196,255,.55); }
 
 /* the desktop key hints are meaningless on a phone */
 body.touch #help { display: none; }

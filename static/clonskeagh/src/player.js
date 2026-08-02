@@ -194,19 +194,6 @@ export class PlayerController {
     }
   }
 
-  /** Don't let the camera sit inside a house.
-   *
-   *  Shrinking the distance until the end point happened to be clear was not
-   *  enough. In a narrow gap between two houses every distance down to the old
-   *  1.6m floor is still inside the neighbour, and the camera was simply left
-   *  there — and from the inside a wall is a back face, so it disappears. That
-   *  is the "invisible walls you can't walk through" effect: you were looking
-   *  out through a house whose windows were still drawn.
-   *
-   *  So find where the sight line first crosses into something and stop just
-   *  short of it, rather than sampling a few points along the way. One pass
-   *  over the colliders instead of up to six.
-   */
   /** Colliders bucketed by location, so walking and the camera both look at the
    *  handful nearby instead of all hundred-and-thirty thousand every frame.
    *  Each one goes in every cell it covers, so a point query only has to look
@@ -229,71 +216,47 @@ export class PlayerController {
     return (this._grid = { G, cells });
   }
 
+  /**
+   * Keep the camera where the player put it, unless it would be *inside* a
+   * building.
+   *
+   * This used to stop at the first thing the sight line crossed, which is
+   * technically correct and constantly wrong in practice: walk anywhere near a
+   * house and the line clips its corner while the camera itself is out in the
+   * open, so the view lurched in for no visible reason. Testing the camera's
+   * own position instead means it only moves when it genuinely has to, and the
+   * distance and height you chose are left alone the rest of the time.
+   *
+   * The cost is that a wall can pass between you and the camera. That is a far
+   * smaller problem than the camera being buried in a house, which is what
+   * made walls vanish, and which this still prevents.
+   */
   _camDistClamped() {
     const cy = Math.cos(this.camPitch);
     const dx = Math.sin(this.camYaw) * cy, dz = Math.cos(this.camYaw) * cy;
-    const PAD = 0.45;
-    let best = this.camDist;
+    let d = this.camDist;
+    if (!this._camInside(d, dx, dz)) return d;      // almost always
+    for (let i = 0; i < 16; i++) {
+      d -= 0.5;
+      if (d <= 0.3) return 0.3;
+      if (!this._camInside(d, dx, dz)) return d;
+    }
+    return 0.3;
+  }
 
-    // Only the cells the sight line can reach. Testing a collider twice costs
-    // nothing — it yields the same answer — so there is no dedup here.
-    const { G, cells } = this._viewGrid();
-    const ex = this.pos.x + dx * best, ez = this.pos.z + dz * best;
-    const gx0 = Math.floor((Math.min(this.pos.x, ex) - PAD) / G);
-    const gx1 = Math.floor((Math.max(this.pos.x, ex) + PAD) / G);
-    const gz0 = Math.floor((Math.min(this.pos.z, ez) - PAD) / G);
-    const gz1 = Math.floor((Math.max(this.pos.z, ez) + PAD) / G);
-
-    for (let gx = gx0; gx <= gx1; gx++) for (let gz = gz0; gz <= gz1; gz++) {
-    const bucket = cells.get(gx + ',' + gz);
-    if (!bucket) continue;
-    for (const c of bucket) {
-      if (c.soft) continue;                       // foliage blocks walking, not the view
-      const ox = this.pos.x - c.x, oz = this.pos.z - c.z;
-      const reach = c.hx + c.hz + PAD + best;     // hx+hz >= the half-diagonal, so this is safe
-      if (ox > reach || ox < -reach || oz > reach || oz < -reach) continue;
-
-      // Ray against an oriented box: rotate into the box's frame and do the
-      // usual slab test.
+  /** Would the camera be inside something solid at this distance? */
+  _camInside(d, dx, dz) {
+    const x = this.pos.x + dx * d, z = this.pos.z + dz * d;
+    const y = this.pos.y + 1.9 + Math.sin(this.camPitch) * d;
+    const PAD = 0.3;
+    return this._near(x, z, PAD + 0.1, (c) => {
+      if (c.soft) return false;                     // foliage never blocks the view
+      if (c.h !== undefined && c.h + 0.3 < y) return false;   // clear over the roof
+      const ox = x - c.x, oz = z - c.z;
       const co = Math.cos(-c.yaw), si = Math.sin(-c.yaw);
       const lx = ox * co - oz * si, lz = ox * si + oz * co;
-      const rx = dx * co - dz * si, rz = dx * si + dz * co;
-      const hx = c.hx + PAD, hz = c.hz + PAD;
-      let t0 = 0, t1 = best;
-
-      if (rx > -1e-6 && rx < 1e-6) {
-        if (lx > hx || lx < -hx) continue;        // parallel and outside this slab
-      } else {
-        let a = (-hx - lx) / rx, b = (hx - lx) / rx;
-        if (a > b) { const t = a; a = b; b = t; }
-        if (a > t0) t0 = a;
-        if (b < t1) t1 = b;
-        if (t0 > t1) continue;
-      }
-      if (rz > -1e-6 && rz < 1e-6) {
-        if (lz > hz || lz < -hz) continue;
-      } else {
-        let a = (-hz - lz) / rz, b = (hz - lz) / rz;
-        if (a > b) { const t = a; a = b; b = t; }
-        if (a > t0) t0 = a;
-        if (b < t1) t1 = b;
-        if (t0 > t1) continue;
-      }
-      // A roof is not an infinitely tall wall. When the camera is pitched up it
-      // rides over the houses, so anything whose top is below the sight line
-      // where it crosses simply isn't in the way.
-      if (c.h !== undefined) {
-        const rise = this.pos.y + 1.9 + Math.tan(this.camPitch) * t0;
-        if (c.h + 0.4 < rise) continue;
-      }
-      if (t0 < best) best = t0;
-    }
-    }
-    // When the player is pressed against a wall the line enters immediately and
-    // this floor is all that is left. It has to stay under _resolve's 0.34m
-    // standing distance, or the floor itself puts the camera through the wall
-    // it is trying to avoid.
-    return Math.max(0.25, best);
+      return Math.abs(lx) < c.hx + PAD && Math.abs(lz) < c.hz + PAD;
+    });
   }
 
   /** Run fn over every collider that could contain a point within `r` of x,z. */

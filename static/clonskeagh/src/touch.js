@@ -40,7 +40,8 @@ export class TouchControls {
       <div id="t-stick"><div id="t-knob"></div></div>
       <div id="t-buttons">
         <button id="t-car" class="t-btn t-wide">Car</button>
-        <div class="t-row">
+        <button id="t-view" class="t-btn t-wide">1st person</button>
+        <div class="t-row" id="t-onfoot">
           <button id="t-run" class="t-btn">Run</button>
           <button id="t-jump" class="t-btn">Jump</button>
         </div>
@@ -61,14 +62,20 @@ export class TouchControls {
     hold('#t-run', 'ShiftLeft');
     hold('#t-jump', 'Space');
 
-    // one-shot button
-    const car = wrap.querySelector('#t-car');
-    car.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      car.classList.add('on');
-      if (this.onAction) this.onAction('car');
-    }, { passive: false });
-    car.addEventListener('touchend', () => car.classList.remove('on'));
+    // one-shot buttons
+    const tap = (id, action) => {
+      const el = wrap.querySelector(id);
+      el.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        el.classList.add('on');
+        if (this.onAction) this.onAction(action);
+      }, { passive: false });
+      el.addEventListener('touchend', () => el.classList.remove('on'));
+      el.addEventListener('touchcancel', () => el.classList.remove('on'));
+      return el;
+    };
+    tap('#t-car', 'car');
+    tap('#t-view', 'view');
 
     // the stick
     this.stick.addEventListener('touchstart', (e) => {
@@ -157,11 +164,29 @@ export class TouchControls {
     return p;
   }
 
-  /** Swap the car button's label as you get in and out. */
+  /** Show which view you're in, since the button is a toggle. */
+  setFirstPerson(on) {
+    const b = document.getElementById('t-view');
+    if (b) {
+      b.textContent = on ? '3rd person' : '1st person';
+      b.classList.toggle('active', on);
+    }
+  }
+
+  /** Swap the car button's label, and put away the on-foot buttons. */
   setDriving(driving) {
     const b = document.getElementById('t-car');
     if (b) b.textContent = driving ? 'Exit' : 'Car';
-    const j = document.getElementById('t-jump');
-    if (j) j.textContent = driving ? 'Brake' : 'Jump';
+    // Run and Jump mean nothing behind the wheel. Braking is the stick pulled
+    // back, so nothing is lost by hiding them.
+    const row = document.getElementById('t-onfoot');
+    if (row) row.style.display = driving ? 'none' : '';
+    if (driving) {
+      this.keys.clear();                 // don't leave Run or Jump stuck down
+      for (const id of ['#t-run', '#t-jump']) {
+        const el = document.querySelector(id);
+        if (el) el.classList.remove('on');
+      }
+    }
   }
 }
