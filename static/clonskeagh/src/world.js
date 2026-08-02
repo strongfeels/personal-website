@@ -53,10 +53,10 @@ function distToPoly(poly, x, z) {
  * from an area ratio, measure the thing that actually shows: a corner of the
  * roof sitting over open ground with no wall under it.
  */
-function roofOverhang(poly, cx, cz, ux, uz, vx, vz, halfL, halfD) {
+function roofOverhang(poly, cx, cz, ux, uz, vx, vz, halfL, halfD, margin = EAVE) {
   let worst = 0;
   for (const [su, sv] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
-    const du = (halfL + EAVE) * su, dv = (halfD + EAVE) * sv;
+    const du = (halfL + margin) * su, dv = (halfD + margin) * sv;
     const x = cx + ux * du + vx * dv, z = cz + uz * du + vz * dv;
     if (pointInPoly(poly, x, z)) continue;
     const d = distToPoly(poly, x, z);
@@ -539,23 +539,38 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     // put a slab along each wall so the obstruction matches what's drawn.
     // Same test the roof uses, so the two can never disagree.
     const poly = b.poly;
-    const overhang = roofOverhang(poly, cx, cz, ux, uz, vx, vz, halfL, halfD);
-    const boxy = overhang <= 1.0;               // matches the walls closely enough
+    // The collider is the bare rectangle, with no eaves on it, and a box that
+    // juts even 15cm past the walls is a barrier you can see through. Slabs are
+    // cheap now that the colliders are indexed, so the bar is low: this costs
+    // about 5,000 extra colliders out of 140,000.
+    const overhang = roofOverhang(poly, cx, cz, ux, uz, vx, vz, halfL, halfD, 0);
+    const boxy = overhang <= 0.15;
     // how high it stands, so the camera can rise clear of it rather than
     // treating every roof as an infinitely tall wall in plan view
-    const top = b.h + (b.roof !== 'flat' && overhang <= 3.0 ? (b.roofH || 0) : 0.4);
+    const top = b.h + (b.roof !== 'flat'
+      && roofOverhang(poly, cx, cz, ux, uz, vx, vz, halfL, halfD) <= 3.0
+      ? (b.roofH || 0) : 0.4);
     if (boxy) {
       colliders.push({ x: cx, z: cz, hx: halfL, hz: halfD, yaw: b.ridge, h: top });
     } else {
+      // The slab has to be THICK or a car crosses it between frames — at
+      // 21 m/s that is 0.35m per frame at 60fps and 0.7m at 30 — but a thick
+      // slab centred on the wall would block you half a metre out in the
+      // garden. So it is thick and pushed inwards, leaving its outer face
+      // exactly on the brickwork. Every footprint winds the same way, so for
+      // an edge (ex, ez) the outward normal is (ez, -ex) with no ambiguity,
+      // which matters on the notch of an L-shaped building.
+      const T = 0.45;                            // half-thickness: 0.9m of solid
       for (let i = 0; i < poly.length; i++) {
         const [x1, z1] = poly[i];
         const [x2, z2] = poly[(i + 1) % poly.length];
         const ex = x2 - x1, ez = z2 - z1;
         const len = Math.hypot(ex, ez);
         if (len < 0.4) continue;
+        const ox = ez / len, oz = -ex / len;     // outward
         colliders.push({
-          x: (x1 + x2) / 2, z: (z1 + z2) / 2,
-          hx: len / 2, hz: 0.3, yaw: Math.atan2(ez, ex), h: top,
+          x: (x1 + x2) / 2 - ox * T, z: (z1 + z2) / 2 - oz * T,
+          hx: len / 2, hz: T, yaw: Math.atan2(ez, ex), h: top,
         });
       }
     }

@@ -404,13 +404,22 @@ export class Drive {
 
     // don't drive through the traffic: shove up against it instead
     const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
+    // A 4.6m circle with a 60-degree cone was too blunt: a car in the next lane,
+    // or one you were drawing level with, sat inside it and pinned you to a
+    // crawl with clear road ahead. Measure along the car's own axes instead, so
+    // only something genuinely in your path counts.
+    const GAP = 0.3;                          // stop this far off its bumper
     for (const o of others) {
       const dx = o.x - this.x, dz = o.z - this.z;
-      const d = Math.hypot(dx, dz);
-      if (d > 4.6 || d < 0.01) continue;
-      const ahead = (dx * fx + dz * fz) / d;
-      if (ahead > 0.5 && this.speed > 0) this.speed = Math.min(this.speed, 0.4);
-      if (ahead < -0.5 && this.speed < 0) this.speed = Math.max(this.speed, -0.4);
+      const along = dx * fx + dz * fz;        // + is in front of you
+      const side = -dx * fz + dz * fx;        // lateral offset
+      if (side > CAR.wid || side < -CAR.wid) continue;   // beside you, not ahead
+      if (along > 0 && along < CAR.len + GAP && this.speed > 0) {
+        this.speed = Math.min(this.speed, 0.4);
+      }
+      if (along < 0 && along > -(CAR.len + GAP) && this.speed < 0) {
+        this.speed = Math.max(this.speed, -0.4);
+      }
     }
 
     const nx = this.x + fx * this.speed * dt;

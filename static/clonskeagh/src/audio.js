@@ -31,6 +31,21 @@ export class Sound {
     if (!Ctor) return;
     const ctx = this.ctx = new Ctor();
 
+    // Safari hands back a context that is already suspended, even when this
+    // runs inside the tap that is meant to unlock it, and the branch above only
+    // resumes a context that already existed — so on iOS the very first call
+    // built the whole graph and left it silent. Chrome starts it running, which
+    // is why this only ever showed up on iPhones. Resuming here fixes that, and
+    // the empty buffer is the long-standing iOS handshake: the context isn't
+    // truly unlocked until something has actually been played through it.
+    if (ctx.state === 'suspended') ctx.resume();
+    try {
+      const src = ctx.createBufferSource();
+      src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+      src.connect(ctx.destination);
+      src.start(0);
+    } catch (err) { /* not fatal — the graph below still gets built */ }
+
     this.master = ctx.createGain();
     this.master.gain.value = this.muted ? 0 : 0.9;
     this.master.connect(ctx.destination);
