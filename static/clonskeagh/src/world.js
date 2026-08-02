@@ -325,27 +325,14 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     const last = pts[pts.length - 1];
     if (!onOtherRoad(last[0], last[1], exceptId)) run.push(last);
     if (run.length > 1) runs.push(run);
-    // Walking the line at 45cm is what makes the ends land on the kerb rather
-    // than up to a metre and a half short — but it also leaves a run of nearly
-    // collinear points down every straight, which was tripling the pavement
-    // geometry. Drop the ones that sit on the line between their neighbours;
-    // the endpoints, which are the whole point, are kept exactly.
-    return runs.map((rn) => simplifyRun(rn, 0.12));
-  }
-
-  function simplifyRun(pts, tol) {
-    if (pts.length < 3) return pts;
-    const out = [pts[0]];
-    for (let i = 1; i < pts.length - 1; i++) {
-      const a = out[out.length - 1], b = pts[i], c = pts[i + 1];
-      const vx = c[0] - a[0], vz = c[1] - a[1];
-      const L = Math.hypot(vx, vz);
-      const dev = L < 1e-6 ? 0
-        : Math.abs((b[0] - a[0]) * vz - (b[1] - a[1]) * vx) / L;
-      if (dev > tol) out.push(b);
-    }
-    out.push(pts[pts.length - 1]);
-    return out;
+    // No simplification here. The obvious version — drop a point if it sits
+    // close to the line between the one before and the one after — is wrong on
+    // a curve: every point on a gentle bend passes that test, so they all get
+    // dropped and the error accumulates with nothing to bound it. It quietly
+    // straightened the footpaths and pulled them off the kerb. Doing it
+    // properly means measuring against the chord of the whole simplified span,
+    // and the extra triangles are not worth that risk.
+    return runs;
   }
 
   // ------------------------------------------------ one feature at a time ---
