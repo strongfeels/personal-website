@@ -1113,8 +1113,16 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     const p = c.pending;
     while (p.i < p.q.length) {
       p.q[p.i++]();
-      // check the clock every few jobs rather than every one
-      if ((p.i & 15) === 0 && performance.now() >= deadline) return false;
+      // Check the clock every job, not every sixteenth.
+      //
+      // Sixteen was fine when a job was a plain extruded box. It is not now: a
+      // job can be a seven-storey block with a window grid on every elevation,
+      // or a road with its pavements and junction, and sixteen of those blow
+      // through a 6ms budget several times over. Measured while driving into
+      // fresh ground, the median stream() was taking 40ms against its 6ms
+      // budget, which is the stutter. performance.now() costs tens of
+      // nanoseconds; emitting a building costs far more.
+      if (performance.now() >= deadline) return false;
     }
     c.pending = null;
     return true;
