@@ -9,7 +9,10 @@ import * as THREE from '../vendor/three.module.js';
 function canvas(size = 256, scale = 1) {
   const c = document.createElement('canvas');
   c.width = c.height = size * scale;
-  const x = c.getContext('2d');
+  // Each of these is drawn once and then read back to derive its normal map.
+  // The hint keeps the canvas on the CPU: drawing is a little slower, reading
+  // is far faster, and the trade is worth about 340ms of loading screen.
+  const x = c.getContext('2d', { willReadFrequently: true });
   if (scale !== 1) x.scale(scale, scale);
   return [c, x];
 }

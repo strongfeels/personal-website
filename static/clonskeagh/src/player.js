@@ -153,7 +153,9 @@ export class PlayerController {
     this.pos.x = nx; this.pos.z = nz;
 
     // jump / gravity
-    if (k.has('Space') && this.onGround) { this.vel.y = 4.6; this.onGround = false; }
+    // 5.3 m/s peaks at 0.97m, which clears the tallest front wall (0.88m)
+    // and its coping. At the old 4.6 the apex was 0.73m and you'd clip it.
+    if (k.has('Space') && this.onGround) { this.vel.y = 5.3; this.onGround = false; }
     this.vel.y -= 14.5 * dt;
     this.pos.y += this.vel.y * dt;
     if (this.pos.y <= 0) { this.pos.y = 0; this.vel.y = 0; this.onGround = true; }
@@ -253,13 +255,18 @@ export class PlayerController {
     });
   }
 
-  /** Push out of any building we've walked into, along the shallowest axis. */
+  /** Push out of any building we've walked into, along the shallowest axis.
+   *  Anything marked `low` — the front garden walls — stops being solid once
+   *  your feet are above it, so you can hop over rather than being fenced into
+   *  the footpath. Cars have no such exemption. */
   _resolve(x, z) {
     const pad = 0.34;
+    const feet = this.pos.y;
     for (let iter = 0; iter < 3; iter++) {
       let hit = false;
       // The push moves x,z, so the candidates are gathered fresh each pass.
       this._near(x, z, pad + 0.1, (c) => {
+        if (c.low && c.h !== undefined && feet > c.h - 0.12) return false;
         const dx = x - c.x, dz = z - c.z;
         const reach = c.hx + c.hz + pad + 1;
         if (Math.abs(dx) > reach || Math.abs(dz) > reach) return false;

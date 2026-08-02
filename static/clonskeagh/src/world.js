@@ -65,6 +65,66 @@ function roofOverhang(poly, cx, cz, ux, uz, vx, vz, halfL, halfD, margin = EAVE)
   return worst;
 }
 
+
+/**
+ * The wall of a building that faces its street: midpoint, outward normal,
+ * tangent and length. Used both when drawing the elevation and when laying out
+ * the front boundary, which have to agree.
+ */
+function frontFace(poly, facing, cx, cz, ux, uz, halfL, halfD) {
+  const wantX = Math.cos(facing), wantZ = Math.sin(facing);
+  let face = null;
+  for (let i = 0; i < poly.length; i++) {
+    const [x1, z1] = poly[i];
+    const [x2, z2] = poly[(i + 1) % poly.length];
+    const ex = x2 - x1, ez = z2 - z1;
+    const len = Math.hypot(ex, ez);
+    if (len < 2.4) continue;                  // too narrow to be a frontage
+    const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
+    let ox = ez / len, oz = -ex / len;
+    if ((mx - cx) * ox + (mz - cz) * oz < 0) { ox = -ox; oz = -oz; }   // outward
+    // prefer the wall pointing most at the street, and among those the wider
+    // one — a 3m return shouldn't beat the real elevation
+    const score = (ox * wantX + oz * wantZ) * Math.min(len, 12);
+    if (!face || score > face.score) {
+      face = { score, x: mx, z: mz, nx: ox, nz: oz, tx: ex / len, tz: ez / len, w: len };
+    }
+  }
+  if (!face) {                                // nothing wide enough: fall back
+    const alongRidge = Math.abs(wantX * ux + wantZ * uz) > 0.7;
+    const ext = alongRidge ? halfL : halfD;
+    face = { x: cx + wantX * ext, z: cz + wantZ * ext, nx: wantX, nz: wantZ,
+             tx: -wantZ, tz: wantX, w: (alongRidge ? halfD : halfL) * 2 };
+  }
+  return face;
+}
+
+/** Do two wall runs cross? Only the 2D segments matter; they're all at ground
+ *  level and the same thickness. */
+function segmentsCross(a, b) {
+  const ax1 = a.mx - a.wx * a.half, az1 = a.mz - a.wz * a.half;
+  const ax2 = a.mx + a.wx * a.half, az2 = a.mz + a.wz * a.half;
+  const bx1 = b.mx - b.wx * b.half, bz1 = b.mz - b.wz * b.half;
+  const bx2 = b.mx + b.wx * b.half, bz2 = b.mz + b.wz * b.half;
+  const o = (px, pz, qx, qz, rx, rz) => {
+    const v = (qx - px) * (rz - pz) - (qz - pz) * (rx - px);
+    return Math.abs(v) < 1e-9 ? 0 : (v > 0 ? 1 : -1);
+  };
+  const o1 = o(ax1, az1, ax2, az2, bx1, bz1);
+  const o2 = o(ax1, az1, ax2, az2, bx2, bz2);
+  const o3 = o(bx1, bz1, bx2, bz2, ax1, az1);
+  const o4 = o(bx1, bz1, bx2, bz2, ax2, az2);
+  if (o1 !== o2 && o3 !== o4) return true;
+  // near-parallel runs sitting on top of each other count as crossing too
+  const near = (px, pz) => {
+    const vx = bx2 - bx1, vz = bz2 - bz1;
+    const L2 = vx * vx + vz * vz;
+    const t = L2 < 1e-9 ? 0 : Math.max(0, Math.min(1, ((px - bx1) * vx + (pz - bz1) * vz) / L2));
+    return Math.hypot(px - (bx1 + vx * t), pz - (bz1 + vz * t)) < 0.55;
+  };
+  return near(ax1, az1) || near(ax2, az2) || near(a.mx, a.mz);
+}
+
 /** Extent of a footprint along a given axis: returns [min,max] of the projection. */
 function projectExtent(poly, ax, az) {
   let lo = Infinity, hi = -Infinity;
@@ -114,7 +174,8 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
       c = { key, cx: (Math.floor(x / CHUNK) + 0.5) * CHUNK,
             cz: (Math.floor(z / CHUNK) + 0.5) * CHUNK,
             areas: [], water: [], roads: [], paths: [], buildings: [],
-            barriers: [], lamps: [], trees: [], hedges: [], golf: [], group: null };
+            barriers: [], lamps: [], trees: [], hedges: [], golf: [],
+            junctions: [], group: null };
       cells.set(key, c);
     }
     return c;
@@ -130,15 +191,66 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     wood: [M.grass, 0x6f9c5c, 0.03], religious: [M.pavement, 0xbfb9a8, 0.04],
     grounds: [M.grass, 0x9dc584, 0.02],
     construction: [M.pavement, 0xa79880, 0.04], parking: [M.road, 0x9a9a9a, 0.05],
-    parking_space: [M.road, 0xa5a5a5, 0.06], water: [M.water, 0xffffff, 0.02],
+    parking_space: [M.road, 0xa5a5a5, 0.06],
+    // Water sits above every other ground layer. A lake is nearly always inside
+    // a park or a set of grounds, and at 0.02 the grass covering it was drawn a
+    // centimetre higher — UCD's Upper Lake was a field.
+    water: [M.water, 0xffffff, 0.075],
   };
 
-  // nearest road point per building — drives the garden path
+  // Nearest road point per building — it decides where the garden path runs and
+  // where the front wall goes.
+  //
+  // There are 23,129 road segments and 21,500 buildings, so asking each building
+  // to scan the lot is half a billion distance tests, and it was the single
+  // biggest thing in the loading screen. Indexed by location it looks at a
+  // handful instead. Chunk building uses the same index, so streaming gets
+  // cheaper too.
   const segs = [];
   for (const r of world.roads) {
     for (let i = 0; i < r.pts.length - 1; i++) {
       segs.push([r.pts[i][0], r.pts[i][1], r.pts[i + 1][0], r.pts[i + 1][1], r.w]);
     }
+  }
+
+  const SEG_G = 60;
+  const segGrid = new Map();
+  for (const sg of segs) {
+    const [ax, az, bx, bz] = sg;
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / SEG_G));
+    const seen = new Set();
+    for (let k = 0; k <= n; k++) {
+      const t = k / n;
+      const key = `${Math.floor((ax + (bx - ax) * t) / SEG_G)},${Math.floor((az + (bz - az) * t) / SEG_G)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const a = segGrid.get(key);
+      if (a) a.push(sg); else segGrid.set(key, [sg]);
+    }
+  }
+
+  /** [distance, x, z, roadWidth] of the closest carriageway, or null. */
+  function nearestRoad(px, pz) {
+    const gx = Math.floor(px / SEG_G), gz = Math.floor(pz / SEG_G);
+    let best = null;
+    for (let ring = 0; ring < 8; ring++) {
+      for (let dx = -ring; dx <= ring; dx++) {
+        for (let dz = -ring; dz <= ring; dz++) {
+          if (ring && Math.max(Math.abs(dx), Math.abs(dz)) !== ring) continue;
+          for (const [ax, az, bx, bz, rw] of segGrid.get(`${gx + dx},${gz + dz}`) || []) {
+            const vx = bx - ax, vz = bz - az;
+            const L2 = vx * vx + vz * vz;
+            const t = L2 < 1e-9 ? 0 : Math.max(0, Math.min(1, ((px - ax) * vx + (pz - az) * vz) / L2));
+            const qx = ax + t * vx, qz = az + t * vz;
+            const d = Math.hypot(px - qx, pz - qz);
+            if (!best || d < best[0]) best = [d, qx, qz, rw];
+          }
+        }
+      }
+      // once the nearest hit is closer than the next ring can possibly be, stop
+      if (best && ring * SEG_G > best[0] + SEG_G) break;
+    }
+    return best;
   }
 
 
@@ -192,7 +304,7 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
    * carriageway, returning the runs that survive. The pavement then stops at the
    * kerb of the crossing street instead of painting over it.
    */
-  function clipToKerb(pts, exceptId, step = 1.5) {
+  function clipToKerb(pts, exceptId, step = 0.45) {
     const runs = [];
     let run = [];
     for (let i = 0; i < pts.length - 1; i++) {
@@ -213,7 +325,27 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     const last = pts[pts.length - 1];
     if (!onOtherRoad(last[0], last[1], exceptId)) run.push(last);
     if (run.length > 1) runs.push(run);
-    return runs;
+    // Walking the line at 45cm is what makes the ends land on the kerb rather
+    // than up to a metre and a half short — but it also leaves a run of nearly
+    // collinear points down every straight, which was tripling the pavement
+    // geometry. Drop the ones that sit on the line between their neighbours;
+    // the endpoints, which are the whole point, are kept exactly.
+    return runs.map((rn) => simplifyRun(rn, 0.12));
+  }
+
+  function simplifyRun(pts, tol) {
+    if (pts.length < 3) return pts;
+    const out = [pts[0]];
+    for (let i = 1; i < pts.length - 1; i++) {
+      const a = out[out.length - 1], b = pts[i], c = pts[i + 1];
+      const vx = c[0] - a[0], vz = c[1] - a[1];
+      const L = Math.hypot(vx, vz);
+      const dev = L < 1e-6 ? 0
+        : Math.abs((b[0] - a[0]) * vz - (b[1] - a[1]) * vx) / L;
+      if (dev > tol) out.push(b);
+    }
+    out.push(pts[pts.length - 1]);
+    return out;
   }
 
   // ------------------------------------------------ one feature at a time ---
@@ -227,6 +359,17 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
   }
 
   function emitWater(mb, w) { ribbon(mb.water, w.pts, w.w, 0.05, 4, 0xffffff); }
+
+  function emitJunction(mb, j) {
+    // sits a hair above the ribbons so the seams don't show through
+    const r = j.w / 2 + 0.15;
+    const pts = [];
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2;
+      pts.push([j.x + Math.cos(a) * r, j.z + Math.sin(a) * r]);
+    }
+    mb.road.polyFlat(pts, 0.065, 6, 0xffffff);
+  }
 
   function emitRoad(mb, r) {
     ribbon(mb.road, r.pts, r.w, 0.06, 6, 0xffffff);
@@ -260,7 +403,121 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     mb[gf.kind].polyFlat(gf.poly, y, uv, 0xffffff);
   }
 
+  /**
+   * `building=roof` is a roof and nothing else: the covered walkways across UCD,
+   * bus shelters, a filling station forecourt. The bake gives them the default
+   * six metres and two storeys like any other building, so they came out as long
+   * blank brick walls — the UCD walkway in particular reads as a 71m barrier
+   * across the campus. Here they get a deck on columns with nothing in between,
+   * and you can walk or drive underneath.
+   */
+  function emitCanopy(mb, b) {
+    const poly = b.poly;
+    let area = 0;
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], c = poly[(i + 1) % poly.length];
+      area += a[0] * c[1] - c[0] * a[1];
+    }
+    area = Math.abs(area) / 2;
+    // the recorded height is the bake's default, not a survey: a forecourt has
+    // to clear a lorry, a walkway only has to clear people
+    const H = area > 400 ? 4.5 : 3.1 + hash01(b.id, 31) * 0.5;
+    const deck = 0.26;
+
+    mb.roof.polyFlat(poly, H + deck, 3, 0xdadada);
+    mb.dark.polyFlat(poly, H, 3, 0x6a6d70, false);          // soffit, seen from below
+    extrudeWalls(mb.dark, poly, H, H + deck, 0x54585c);     // fascia band
+
+    for (let i = 0; i < poly.length; i++) {
+      const [x1, z1] = poly[i];
+      const [x2, z2] = poly[(i + 1) % poly.length];
+      const ex = x2 - x1, ez = z2 - z1;
+      const len = Math.hypot(ex, ez);
+      if (len < 1.2) continue;
+      const ux2 = ex / len, uz2 = ez / len;
+      const inx = -(ez / len), inz = ex / len;              // inward, walls wind CCW
+      const n = Math.max(1, Math.round(len / 5.5));
+      for (let k = 0; k <= n; k++) {
+        if (k === n && i !== poly.length - 1) continue;     // corners shared
+        const t = (len * k) / n;
+        const px2 = x1 + ux2 * t + inx * 0.34;
+        const pz2 = z1 + uz2 * t + inz * 0.34;
+        mb.dark.box(px2, 0, pz2, 0.1, H, 0.1, 0, 1, 0x4a4d50);
+      }
+    }
+  }
+
+
+  /**
+   * Shops, banks and offices — 319 of them — fell through to the house
+   * treatment: one front door and a bay window, which on a 24-metre bank
+   * frontage leaves a blank wall the size of a tennis court. This gives them
+   * what a commercial elevation actually has: a glazed shopfront the width of
+   * the building, a signage fascia over it, and a regular grid of windows above.
+   *
+   * The footprint, height, storey count, flat roof and which wall faces the
+   * street are all from the data. The arrangement of glazing on that wall is
+   * not — it is a plausible commercial front, not a portrait of any one shop.
+   */
+  function commercialWalls(mb, poly, b, wallKey, tint) {
+    const SHOP = Math.min(3.4, b.h * 0.52);        // top of the shopfront
+    const FASCIA = 0.85;                           // the sign band above it
+    const glassCol = 0xffffff;
+
+    for (let i = 0; i < poly.length; i++) {
+      const [x1, z1] = poly[i];
+      const [x2, z2] = poly[(i + 1) % poly.length];
+      const ex = x2 - x1, ez = z2 - z1;
+      const len = Math.hypot(ex, ez);
+      if (len < 3.0) continue;
+      const tx = ex / len, tz = ez / len;
+      const nx = ez / len, nz = -ex / len;         // outward
+      const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
+      const yaw = Math.atan2(nx, -nz);
+      const face = (off, y, w, h, key, colour, proud) => {
+        const ax = mx + tx * (off - w / 2) + nx * proud, az = mz + tz * (off - w / 2) + nz * proud;
+        const bx = mx + tx * (off + w / 2) + nx * proud, bz = mz + tz * (off + w / 2) + nz * proud;
+        mb[key].quad([bx, y, bz], [ax, y, az], [ax, y + h, az], [bx, y + h, bz],
+                     [[0, 0], [1, 0], [1, 1], [0, 1]], colour);
+      };
+
+      // ground floor: one run of glazing, held off the ends by a pier
+      const pier = 0.7;
+      const glazed = len - pier * 2;
+      if (glazed > 1.5) {
+        face(0, 0.45, glazed, SHOP - 0.7, 'glass', glassCol, 0.06);
+        face(0, 0.0, glazed, 0.45, 'dark', 0x3d4045, 0.07);            // stall riser
+        // mullions every 2m or so
+        const bays = Math.max(1, Math.round(glazed / 2.1));
+        for (let k = 1; k < bays; k++) {
+          face(-glazed / 2 + (glazed * k) / bays, 0.45, 0.1, SHOP - 0.7, 'trim', 0xe8e6e0, 0.1);
+        }
+        // fascia band, where the sign goes
+        face(0, SHOP, len - 0.2, FASCIA, 'dark', 0x2f3338, 0.09);
+        face(0, SHOP + FASCIA - 0.06, len - 0.2, 0.06, 'trim', 0xd9d5cc, 0.11);
+      }
+
+      // upper floors: a regular grid, as offices over a shop
+      const floors = Math.max(1, Math.round((b.h - SHOP - FASCIA) / 3.0));
+      const cols = Math.max(1, Math.floor(len / 3.0));
+      for (let f = 0; f < floors; f++) {
+        const y = SHOP + FASCIA + 0.75 + f * 3.0;
+        if (y + 1.5 > b.h) break;
+        for (let k = 0; k < cols; k++) {
+          const off = -len / 2 + (len * (k + 0.5)) / cols;
+          face(off, y, 1.35, 1.5, 'trim', 0xf0ede6, 0.05);
+          face(off, y + 0.08, 1.2, 1.34, 'glass', glassCol, 0.07);
+        }
+      }
+    }
+
+    // a parapet, since these are flat-roofed
+    extrudeWalls(mb[wallKey], poly, b.h, b.h + 0.55, tint);
+    mb.granite.polyFlat(poly, b.h + 0.58, 3, 0xffffff);
+  }
+
   function emitBuilding(mb, b) {
+    if (b.type === 'roof') { emitCanopy(mb, b); return; }
     const poly = b.poly;
     const wallKey = M[b.mat] ? b.mat : 'redbrick';
     const isOut = b.type === 'shed' || b.type === 'garage' || b.type === 'garages';
@@ -365,6 +622,8 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     // ---- landmarks get arcaded elevations, not a semi-d's door and bay
     if (b.lm === 'hospital') {
       victorianWalls(mb, poly, b);
+    } else if (b.lm === 'commercial' && b.h >= 4) {
+      commercialWalls(mb, poly, b, wallKey, tint);
     } else if (b.lm && b.lm !== 'commercial' && b.lm !== 'apartments') {
       arcadeWalls(mb, poly, b, wallKey, tint);
     } else if (!isOut) {
@@ -373,30 +632,7 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
       // box those are different places — on the worst footprints here, eleven
       // metres apart — and the door and windows ended up hanging in the garden
       // with no wall behind them.
-      const wantX = Math.cos(b.facing), wantZ = Math.sin(b.facing);
-      let face = null;
-      for (let i = 0; i < poly.length; i++) {
-        const [x1, z1] = poly[i];
-        const [x2, z2] = poly[(i + 1) % poly.length];
-        const ex = x2 - x1, ez = z2 - z1;
-        const len = Math.hypot(ex, ez);
-        if (len < 2.4) continue;                  // too narrow to be a frontage
-        const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
-        let ox = ez / len, oz = -ex / len;
-        if ((mx - cx) * ox + (mz - cz) * oz < 0) { ox = -ox; oz = -oz; }   // outward
-        // prefer the wall pointing most at the street, and among those the
-        // wider one — a 3m return shouldn't beat the real elevation
-        const score = (ox * wantX + oz * wantZ) * Math.min(len, 12);
-        if (!face || score > face.score) {
-          face = { score, x: mx, z: mz, nx: ox, nz: oz, tx: ex / len, tz: ez / len, w: len };
-        }
-      }
-      if (!face) {                                // nothing wide enough: fall back
-        const alongRidge = Math.abs(wantX * ux + wantZ * uz) > 0.7;
-        const ext = alongRidge ? halfL : halfD;
-        face = { x: cx + wantX * ext, z: cz + wantZ * ext, nx: wantX, nz: wantZ,
-                 tx: -wantZ, tz: wantX, w: (alongRidge ? halfD : halfL) * 2 };
-      }
+      const face = frontFace(poly, b.facing, cx, cz, ux, uz, halfL, halfD);
       const nx = face.nx, nz = face.nz;
       const tx = face.tx, tz = face.tz;           // tangent along the facade
       const fx = face.x, fz = face.z;
@@ -472,6 +708,21 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
         const end = Math.max(0.6, d - rw / 2 - 1.9);
         ribbon(mb.pavement, [[fx + dx * 0.1, fz + dz * 0.1],
                              [fx + dx * end, fz + dz * end]], 1.15, 0.10, 3, 0xd9d3c4);
+
+        // the front wall, laid out globally so neighbours can't cross
+        for (const w of wallsFor.get(b.id) || []) {
+          if (w.style < 0.18) {
+            mb.hedge.box(w.mx, 0, w.mz, w.half, w.h + 0.45, 0.32, w.yaw, 1.2, 0xffffff);
+            continue;
+          }
+          mb[wallKey].box(w.mx, 0, w.mz, w.half, w.h, 0.15, w.yaw, BRICK_UV, tint, false);
+          mb.granite.box(w.mx, w.h, w.mz, w.half + 0.03, 0.08, 0.19, w.yaw, 1.4, 0xffffff);
+          for (const e of [-1, 1]) {              // a pier at each end of the run
+            const px2 = w.mx + w.wx * w.half * e, pz2 = w.mz + w.wz * w.half * e;
+            mb[wallKey].box(px2, 0, pz2, 0.2, w.h + 0.15, 0.2, w.yaw, BRICK_UV, tint, false);
+            mb.granite.box(px2, w.h + 0.15, pz2, 0.24, 0.07, 0.24, w.yaw, 1.4, 0xffffff);
+          }
+        }
       }
     }
 
@@ -521,7 +772,135 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     c.lamps.push(r);
   }
   for (const p of world.paths) cellAt(p.pts[0][0], p.pts[0][1]).paths.push(p);
-  for (const bar of world.barriers) cellAt(bar.pts[0][0], bar.pts[0][1]).barriers.push(bar);
+
+  // Every road is drawn as its own ribbon and they simply stop where they meet,
+  // so a junction is a notch of grass between four blunt ends, and the clipped
+  // pavements leave a gap around it. A patch of carriageway at each meeting
+  // point closes both. 1,655 of them, a dozen triangles each.
+  {
+    const at = new Map();
+    for (const r of world.roads) {
+      for (const p of [r.pts[0], r.pts[r.pts.length - 1]]) {
+        const k = `${p[0].toFixed(1)},${p[1].toFixed(1)}`;
+        const j = at.get(k);
+        if (j) { j.n++; j.w = Math.max(j.w, r.w); }
+        else at.set(k, { x: p[0], z: p[1], w: r.w, n: 1 });
+      }
+    }
+    for (const j of at.values()) {
+      if (j.n < 2) continue;                    // a dead end needs no patch
+      cellAt(j.x, j.z).junctions.push(j);
+    }
+  }
+  // The mapped walls, fences and hedges — 131km of them — were drawn and never
+  // collided with, so you could drive straight through a boundary wall. They
+  // get the same treatment as the garden walls: solid to cars, and anything low
+  // enough to hop is marked so you can.
+  for (const bar of world.barriers) {
+    cellAt(bar.pts[0][0], bar.pts[0][1]).barriers.push(bar);
+    const th = bar.kind === 'hedge' ? 0.5 : bar.kind === 'fence' ? 0.08 : 0.32;
+    for (let i = 0; i < bar.pts.length - 1; i++) {
+      const [x1, z1] = bar.pts[i], [x2, z2] = bar.pts[i + 1];
+      const len = Math.hypot(x2 - x1, z2 - z1);
+      if (len < 0.4) continue;
+      colliders.push({
+        x: (x1 + x2) / 2, z: (z1 + z2) / 2,
+        hx: len / 2,
+        // never thinner than this, or a car crosses it between frames
+        hz: Math.max(th / 2, 0.22),
+        yaw: Math.atan2(z2 - z1, x2 - x1),
+        h: bar.h,
+        low: bar.h <= 1.0,
+      });
+    }
+  }
+
+  // ------------------------------------------------ front garden walls ----
+  //
+  // Almost none of this is in the map: of the houses sampled, 4% had any
+  // barrier recorded between them and their street. So the low wall along the
+  // footpath is generated, like the doors and bays — placed against a real
+  // footprint on a real street rather than surveyed.
+  //
+  // It has to be laid out here, in one pass over every building, rather than
+  // per chunk. Each house knows nothing about its neighbours, so on a corner
+  // plot two of these ran straight through each other; and a chunk streaming
+  // in later must not produce different walls from the same chunk streaming in
+  // first, which anything order-dependent would.
+  const wallsFor = new Map();          // building id -> segments to draw
+  {
+    const laid = [];                   // everything accepted so far, for crossing tests
+    const GW = 24, gwGrid = new Map();
+    const add = (seg) => {
+      const k = `${Math.floor(seg.mx / GW)},${Math.floor(seg.mz / GW)}`;
+      const a = gwGrid.get(k);
+      if (a) a.push(seg); else gwGrid.set(k, [seg]);
+      laid.push(seg);
+    };
+    const crosses = (seg) => {
+      const gx = Math.floor(seg.mx / GW), gz = Math.floor(seg.mz / GW);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          for (const o of gwGrid.get(`${gx + dx},${gz + dz}`) || []) {
+            if (segmentsCross(seg, o)) return true;
+          }
+        }
+      }
+      return false;
+    };
+
+    // deterministic order, so the result never depends on streaming
+    const sorted = world.buildings.slice().sort((a, b) => a.id - b.id);
+    for (const b of sorted) {
+      if (b.lm || b.type === 'roof' || b.type === 'shed'
+          || b.type === 'garage' || b.type === 'garages') continue;
+      const poly = b.poly;
+      const ux = Math.cos(b.ridge), uz = Math.sin(b.ridge);
+      const vx = -uz, vz = ux;
+      const [ulo, uhi] = projectExtent(poly, ux, uz);
+      const [vlo, vhi] = projectExtent(poly, vx, vz);
+      const uc = (ulo + uhi) / 2, vc = (vlo + vhi) / 2;
+      const halfL = (uhi - ulo) / 2, halfD = (vhi - vlo) / 2;
+      const cx = ux * uc + vx * vc, cz = uz * uc + vz * vc;
+      const face = frontFace(poly, b.facing, cx, cz, ux, uz, halfL, halfD);
+      if (face.w < 3.5) continue;
+
+      // the property line: where the garden path stops, at the back of the kerb
+      const best = nearestRoad(face.x, face.z);
+      if (!best || best[0] >= 26) continue;
+      const [d, qx, qz, rw] = best;
+      const dirx = (qx - face.x) / d, dirz = (qz - face.z) / d;
+      const end = Math.max(0.6, d - rw / 2 - 1.9);
+      if (end <= 2.4) continue;
+
+      const bx = face.x + dirx * end, bz = face.z + dirz * end;
+      const wx = -dirz, wz = dirx;                 // along the street
+      const yaw = Math.atan2(wz, wx);
+      const half = Math.min(face.w / 2 + 0.5, 9);
+      const gate = 1.0;
+      const style = hash01(b.id, 21);
+      const h = 0.62 + hash01(b.id, 22) * 0.26;    // a touch taller than before
+      const out = [];
+      for (const [a0, a1] of [[-half, -gate], [gate, half]]) {
+        const len = a1 - a0;
+        if (len < 0.5) continue;
+        const mx = bx + wx * (a0 + len / 2), mz = bz + wz * (a0 + len / 2);
+        const seg = { mx, mz, half: len / 2, wx, wz, yaw, h, style, id: b.id };
+        if (crosses(seg)) continue;                // a neighbour got here first
+        add(seg);
+        out.push(seg);
+      }
+      if (out.length) {
+        // gate piers only where a run actually survived beside them
+        out.push(...[]);
+        wallsFor.set(b.id, out);
+        for (const seg of out) {
+          colliders.push({ x: seg.mx, z: seg.mz, hx: seg.half, hz: 0.16,
+                           yaw: seg.yaw, h: seg.h, low: true });
+        }
+      }
+    }
+  }
 
   for (const b of world.buildings) {
     cellAt(b.poly[0][0], b.poly[0][1]).buildings.push(b);
@@ -537,6 +916,29 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     // it walls off garden you can plainly see is empty. Where it fits the
     // building, keep it — one box is far cheaper than six. Where it doesn't,
     // put a slab along each wall so the obstruction matches what's drawn.
+    // A canopy is a roof on posts: only the posts are solid, or you could not
+    // walk under the thing it exists to walk under.
+    if (b.type === 'roof') {
+      const cp = b.poly;
+      for (let i = 0; i < cp.length; i++) {
+        const [x1, z1] = cp[i];
+        const [x2, z2] = cp[(i + 1) % cp.length];
+        const ex = x2 - x1, ez = z2 - z1;
+        const len = Math.hypot(ex, ez);
+        if (len < 1.2) continue;
+        const n = Math.max(1, Math.round(len / 5.5));
+        for (let k = 0; k < n; k++) {
+          const t = (len * k) / n;
+          colliders.push({
+            x: x1 + (ex / len) * t - (ez / len) * 0.34,
+            z: z1 + (ez / len) * t + (ex / len) * 0.34,
+            hx: 0.16, hz: 0.16, yaw: 0, h: 3.2,
+          });
+        }
+      }
+      continue;
+    }
+
     // Same test the roof uses, so the two can never disagree.
     const poly = b.poly;
     // The collider is the bare rectangle, with no eaves on it, and a box that
@@ -604,6 +1006,7 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     const q = [];
     for (const a of c.areas) q.push(() => emitArea(mb, a));
     for (const w of c.water) q.push(() => emitWater(mb, w));
+    for (const j of c.junctions) q.push(() => emitJunction(mb, j));
     for (const r of c.roads) q.push(() => emitRoad(mb, r));
     for (const p of c.paths) q.push(() => emitPath(mb, p));
     for (const gf of c.golf) q.push(() => emitGolf(mb, gf));
