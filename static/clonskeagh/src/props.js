@@ -197,3 +197,229 @@ export function addCars(world, scene, colliders) {
   // handed back so one of these can be taken over and driven away
   return { cars, wheels, slots };
 }
+
+// ------------------------------------------------------------ street furniture
+// 158 benches and 136 waste baskets, all of which OSM has been carrying and the
+// game has never drawn. The tags are unusually good for street furniture — four
+// benches in five say whether they have a backrest, a third name their material
+// — so these vary rather than being one model stamped 294 times.
+//
+// What OSM does not say is which way they point: one bench in 158 has
+// `direction`. The bake infers it from the path beside them and writes `face`,
+// the direction the sitter looks in.
+
+/**
+ * Concatenate geometries that will share a transform and a colour.
+ *
+ * A bin's rim and hood are always drawn together, in the same place, in the same
+ * shade, so keeping them as separate instanced meshes buys nothing and costs a
+ * draw call per chunk. three's BufferGeometryUtils lives in examples/, which
+ * isn't vendored here, so this does the one case that is needed.
+ */
+function mergeGeo(list) {
+  const geos = list.map((g) => (g.index ? g.toNonIndexed() : g));
+  let n = 0;
+  for (const g of geos) n += g.attributes.position.count;
+  const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), uv = new Float32Array(n * 2);
+  let o3 = 0, o2 = 0;
+  for (const g of geos) {
+    pos.set(g.attributes.position.array, o3);
+    nrm.set(g.attributes.normal.array, o3);
+    uv.set(g.attributes.uv.array, o2);
+    o3 += g.attributes.position.count * 3;
+    o2 += g.attributes.position.count * 2;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  out.computeBoundingSphere();
+  return out;
+}
+
+const BENCH_COLOUR = {
+  wood: 0x8a6a45, stone: 0x9a958c, metal: 0x4e565c, steel: 0x4e565c,
+  concrete: 0xa39e94, plastic: 0x2f6a44,
+};
+// OSM `colour` is free text: a hex string, or one of a handful of names.
+const NAMED = {
+  black: 0x24272a, white: 0xd8d5cc, grey: 0x808589, gray: 0x808589,
+  green: 0x2f5d3a, darkgreen: 0x24462c, blue: 0x2a4a6b, red: 0x7a2f2a,
+  brown: 0x6b4a2f, silver: 0xa8adb1, yellow: 0xb59433,
+};
+
+function benchColour(b) {
+  const c = (b.col || '').trim().toLowerCase();
+  if (c.startsWith('#') && (c.length === 7 || c.length === 4)) {
+    const v = parseInt(c.length === 4
+      ? c[1] + c[1] + c[2] + c[2] + c[3] + c[3] : c.slice(1), 16);
+    if (!Number.isNaN(v)) return v;
+  }
+  if (NAMED[c] !== undefined) return NAMED[c];
+  return BENCH_COLOUR[(b.mat || '').toLowerCase()] ?? 0x8a6a45;
+}
+
+/** Seat length. `seats` is present on 39% of them; the rest get a two-seater. */
+function benchLength(b) {
+  const n = b.seats;
+  return n ? Math.max(1.1, Math.min(3.2, n * 0.52)) : 1.75;
+}
+
+export function furnitureColliders(items, colliders) {
+  // `soft` for the same reason trees are: being unable to walk through a bench
+  // is right, having the camera shoved off it is not.
+  for (const f of items) {
+    if (f.kind === 'bench') {
+      colliders.push({ x: f.x, z: f.z, hx: benchLength(f) / 2 + 0.05, hz: 0.34,
+                       yaw: (f.face ?? 0) + Math.PI / 2, soft: true, h: 0.88 });
+    } else {
+      colliders.push({ x: f.x, z: f.z, hx: 0.25, hz: 0.25, yaw: 0, soft: true, h: 1.11 });
+    }
+  }
+}
+
+/**
+ * One chunk's benches and baskets.
+ *
+ * Local space for a bench is +X along the seat and +Z behind the sitter's back.
+ * Three's rotation about Y sends local +X to world angle -theta, so putting the
+ * seat across the direction of view means theta = -(face + PI/2).
+ */
+export function makeFurniture(items, M) {
+  if (!items || !items.length) return [];
+
+  const benches = items.filter((f) => f.kind === 'bench');
+  const bins = items.filter((f) => f.kind !== 'bench');
+  const out = [];
+
+  if (benches.length) {
+    // seat, back, two legs, two armrests — every one of them a box
+    let boxes = 0;
+    for (const b of benches) boxes += 3 + (b.back ? 1 : 0) + (b.arm ? 2 : 0);
+
+    const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), M.furniture, boxes);
+    mesh.castShadow = mesh.receiveShadow = true;
+
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const pos = new THREE.Vector3(), scl = new THREE.Vector3();
+    const col = new THREE.Color();
+    let i = 0;
+
+    benches.forEach((b, bi) => {
+      const face = b.face ?? 0;
+      const theta = -(face + Math.PI / 2);
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), theta);
+      const co = Math.cos(theta), si = Math.sin(theta);
+      // local (lx, ly, lz) -> world, matching the rotation above
+      const place = (lx, ly, lz, sx, sy, sz, colour, tilt) => {
+        pos.set(b.x + lx * co + lz * si, ly, b.z - lx * si + lz * co);
+        scl.set(sx, sy, sz);
+        if (tilt) {
+          const t = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), tilt);
+          m.compose(pos, q.clone().multiply(t), scl);
+        } else {
+          m.compose(pos, q, scl);
+        }
+        mesh.setMatrixAt(i, m);
+        col.setHex(colour);
+        // a touch of per-bench variation so a row of them isn't one flat colour
+        const j = 0.93 + hash01(bi, 7) * 0.14;
+        col.multiplyScalar(j);
+        mesh.setColorAt(i, col);
+        i++;
+      };
+
+      const L = benchLength(b);
+      const wood = benchColour(b);
+      const metal = (b.mat || '').toLowerCase() === 'stone' ? wood : 0x3a4046;
+      const SEAT_Y = 0.45;
+
+      place(0, SEAT_Y, 0, L, 0.06, 0.44, wood);                       // seat slab
+      const legX = Math.max(0.18, L / 2 - 0.22);
+      place(-legX, SEAT_Y / 2, 0, 0.07, SEAT_Y, 0.4, metal);          // legs
+      place(legX, SEAT_Y / 2, 0, 0.07, SEAT_Y, 0.4, metal);
+      if (b.back) {
+        // leaned back a little; the tilt is about local X, which is the seat line
+        place(0, 0.71, 0.20, L, 0.42, 0.055, wood, -0.16);
+      }
+      if (b.arm) {
+        place(-L / 2 + 0.03, 0.63, 0.02, 0.05, 0.05, 0.42, metal);
+        place(L / 2 - 0.03, 0.63, 0.02, 0.05, 0.05, 0.42, metal);
+      }
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    out.push(mesh);
+  }
+
+  if (bins.length) {
+    // The Dublin street bin is the "Heritage" pattern made by Larkin: a black
+    // cylinder with gold banding and a concave top, 1110mm tall and 450mm across.
+    // Those are the manufacturer's figures, and both matter — an earlier guess
+    // here had them dark green and 840mm, which is hip height on a bin that
+    // should reach your chest.
+    const BIN_H = 1.11, R = 0.225;
+
+    // Black shell: plinth, body, the shoulder, and the top flaring back out —
+    // that flare is what reads as the concave lid from a distance.
+    const plinth = new THREE.CylinderGeometry(R + 0.015, R + 0.02, 0.06, 12);
+    plinth.translate(0, 0.03, 0);
+    const barrel = new THREE.CylinderGeometry(R + 0.01, R, 0.80, 12);
+    barrel.translate(0, 0.46, 0);
+    const shoulder = new THREE.CylinderGeometry(R - 0.03, R + 0.02, 0.10, 12);
+    shoulder.translate(0, 0.91, 0);
+    const lid = new THREE.CylinderGeometry(R, R - 0.03, 0.15, 12);
+    lid.translate(0, 1.035, 0);
+
+    // Gold: a wide band below the shoulder and a narrower one near the foot.
+    const bandHi = new THREE.CylinderGeometry(R + 0.022, R + 0.022, 0.075, 12);
+    bandHi.translate(0, 0.745, 0);
+    const bandLo = new THREE.CylinderGeometry(R + 0.018, R + 0.018, 0.045, 12);
+    bandLo.translate(0, 0.155, 0);
+
+    const shell = new THREE.InstancedMesh(
+      mergeGeo([plinth, barrel, shoulder, lid]), M.furniture, bins.length);
+    const band = new THREE.InstancedMesh(mergeGeo([bandHi, bandLo]), M.furniture, bins.length);
+    shell.castShadow = band.castShadow = true;
+    shell.receiveShadow = true;
+
+    const m = new THREE.Matrix4();
+    const up = new THREE.Quaternion();
+    const pos = new THREE.Vector3(), scl = new THREE.Vector3();
+    const col = new THREE.Color();
+
+    bins.forEach((f, i) => {
+      // What goes in it is the only tag that changes the look. A dog-waste bin
+      // is a small green one, and recycling is colour-coded; both are single
+      // instances here but would be wrong drawn as a heritage litter bin.
+      // `material` is deliberately ignored — the heritage bin IS metal, so
+      // metal/steel says nothing that black-and-gold doesn't already say.
+      const waste = (f.waste || '').toLowerCase();
+      let bodyCol = 0x1b1b1d;                       // black gloss
+      let bandCol = 0xa8842f;                       // gold
+      let s = 1.0;
+      if (waste === 'dog_excrement') { bodyCol = 0x3f7a34; bandCol = 0x2a4a24; s = 0.78; }
+      else if (waste === 'recycling') { bodyCol = 0x2b4f72; bandCol = 0xa8842f; }
+      const named = NAMED[(f.col || '').trim().toLowerCase()];
+      if (named !== undefined) bodyCol = named;     // the band stays gold
+
+      pos.set(f.x, 0, f.z);
+      scl.set(s, s, s);
+      m.compose(pos, up, scl);
+      shell.setMatrixAt(i, m); band.setMatrixAt(i, m);
+
+      // barely any variation: these are painted to a spec, not weathered timber
+      const g = 0.96 + hash01(i, 11) * 0.08;
+      shell.setColorAt(i, col.setHex(bodyCol).multiplyScalar(g));
+      band.setColorAt(i, col.setHex(bandCol).multiplyScalar(g));
+    });
+    for (const mesh of [shell, band]) {
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
+    out.push(shell, band);
+  }
+
+  return out;
+}

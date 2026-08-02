@@ -380,6 +380,9 @@ export function buildMaterials() {
     dark: new THREE.MeshStandardMaterial({ roughness: 0.8, vertexColors: true }),
     water: new THREE.MeshStandardMaterial({ color: 0x35566b, roughness: 0.16, metalness: 0.4, vertexColors: true }),
     bark: new THREE.MeshStandardMaterial({ color: 0x5a4433, roughness: 0.95 }),
+    // white, because the colour comes per instance: benches carry a material
+    // and sometimes a colour tag, and the bins are municipal green.
+    furniture: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72 }),
     // instanced foliage gets its variety from setColorAt, not a vertex-colour
     // attribute — asking for vertexColors here renders the canopies black
     leaf: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 }),

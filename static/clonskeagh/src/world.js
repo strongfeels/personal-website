@@ -7,7 +7,8 @@
 import * as THREE from '../vendor/three.module.js';
 import { MeshBuilder, ribbon, ribbonSlab, offsetLine } from './meshbuilder.js';
 import { DOOR_COLOURS, RENDER_TINTS } from './materials.js';
-import { makeTrees, makeHedges, treeColliders, hedgeColliders } from './props.js';
+import { makeTrees, makeHedges, makeFurniture, treeColliders, hedgeColliders,
+         furnitureColliders } from './props.js';
 
 const EAVE = 0.38;          // roof overhang
 const BRICK_UV = 1.7;       // metres per brick texture tile
@@ -176,7 +177,7 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
             cz: (Math.floor(z / CHUNK) + 0.5) * CHUNK,
             areas: [], water: [], roads: [], paths: [], buildings: [],
             barriers: [], lamps: [], trees: [], hedges: [], golf: [],
-            junctions: [], group: null };
+            junctions: [], furniture: [], group: null };
       cells.set(key, c);
     }
     return c;
@@ -1177,6 +1178,16 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
   treeColliders(veg.trees || [], colliders);
   hedgeColliders(veg.hedges || [], colliders);
 
+  // Benches and bins have been in the baked POIs all along without ever being
+  // drawn. They are small and there are only 294, so they ride the same chunk
+  // stream as everything else rather than being one mesh over the whole map.
+  const FURNITURE = new Set(['bench', 'waste_basket']);
+  // `indoor` bins are inside a building the game has no interior for, so drawing
+  // them puts a bin in the middle of the street.
+  const street = (world.pois || []).filter((p) => FURNITURE.has(p.kind) && !p.indoor);
+  for (const p of street) cellAt(p.x, p.z).furniture.push(p);
+  furnitureColliders(street, colliders);
+
   // ------------------------------------------------- build / drop a cell ----
   // Building a whole chunk at once meant one frame doing every building, road
   // and tree in 220 m of city, plus all the mesh uploads — which is exactly what
@@ -1204,6 +1215,7 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     }
     q.push(() => { for (const m of makeTrees(c.trees, M)) g.add(m); });
     q.push(() => { for (const m of makeHedges(c.hedges, M)) g.add(m); });
+    q.push(() => { for (const m of makeFurniture(c.furniture, M)) g.add(m); });
     q.push(() => { scene.add(g); c.group = g; });
 
     c.pending = { q, i: 0 };
