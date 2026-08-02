@@ -131,14 +131,6 @@ export function offsetLine(pts, dist) {
   return out;
 }
 
-/** A flat triangle wound so it faces up, whichever order the points arrive in. */
-function flatTri(mb, a, b, c, colour) {
-  const up = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]);
-  const uv = [[0, 0], [1, 0], [0, 1]];
-  if (up >= 0) mb.tri(a, b, c, uv, colour);
-  else mb.tri(a, c, b, uv, colour);
-}
-
 /** Build a flat ribbon (road surface, path) along a polyline. */
 export function ribbon(mb, pts, width, y, uvScale, colour) {
   const h = width / 2;
@@ -155,33 +147,16 @@ export function ribbon(mb, pts, width, y, uvScale, colour) {
     const u0 = run / uvScale, u1 = (run + len) / uvScale, v = width / uvScale;
     mb.quad(a, b, c, d, [[u0, 0], [u1, 0], [u1, v], [u0, v]], colour);
     run += len;
-
-    // Fill the wedge on the OUTSIDE of the bend.
-    //
-    // Each segment is its own rectangle, square to its own direction, so at
-    // every vertex the two rectangles overlap on the inside of the turn and
-    // leave a wedge of nothing on the outside. This used to be patched with a
-    // quad wound outer-prev, outer-next, inner-prev, inner-next — a bowtie,
-    // correct for one turn direction and inside-out for the other, so half of
-    // them were back-facing and culled. A road that keeps turning the same way
-    // therefore gapped the whole way along its outer edge, which is why
-    // roundabouts looked chewed.
+    // round out the joint so corners don't gap
     if (i < pts.length - 2) {
       const [x3, z3] = pts[i + 2];
       let ex = x3 - x2, ez = z3 - z2;
-      const el = Math.hypot(ex, ez);
-      if (el > 0.01) {
-        ex /= el; ez /= el;
-        const turn = dx * ez - dz * ex;          // sign says which way it bends
-        if (Math.abs(turn) > 1e-4) {
-          const s = turn > 0 ? -1 : 1;           // the outside of the bend
-          flatTri(mb,
-            [x2, y, z2],
-            [x2 + (-dz * h) * s, y, z2 + (dx * h) * s],
-            [x2 + (-ez * h) * s, y, z2 + (ex * h) * s],
-            colour);
-        }
-      }
+      const el = Math.hypot(ex, ez) || 1;
+      ex /= el; ez /= el;
+      const enx = -ez * h, enz = ex * h;
+      mb.quad([x2 + nx, y, z2 + nz], [x2 + enx, y, z2 + enz],
+              [x2 - nx, y, z2 - nz], [x2 - enx, y, z2 - enz],
+              [[0, 0], [1, 0], [1, 1], [0, 1]], colour);
     }
   }
 }
@@ -202,31 +177,6 @@ export function ribbonSlab(mb, pts, width, y, thick, uvScale, colour, sideColour
       const c = [x2 + nx, y, z2 + nz], d = [x1 + nx, y, z1 + nz];
       if (s === 1) mb.quad(a, b, c, d, [[0, 0], [len / uvScale, 0], [len / uvScale, 0.1], [0, 0.1]], sideColour);
       else mb.quad(b, a, d, c, [[0, 0], [len / uvScale, 0], [len / uvScale, 0.1], [0, 0.1]], sideColour);
-    }
-
-    // The kerb face has the same problem the surface had: each segment's side
-    // is square to its own direction, so at a bend the outer face stops and the
-    // next one starts somewhere else, leaving a slot straight through the kerb.
-    // Around a roundabout that reads as a dashed line of holes. Close it with an
-    // upright quad between the two faces, on the outside of the turn.
-    if (i < pts.length - 2) {
-      const [x3, z3] = pts[i + 2];
-      let ex = x3 - x2, ez = z3 - z2;
-      const el = Math.hypot(ex, ez);
-      if (el > 0.01) {
-        ex /= el; ez /= el;
-        const turn = dx * ez - dz * ex;
-        if (Math.abs(turn) > 1e-4) {
-          const s = turn > 0 ? -1 : 1;
-          const p1x = x2 + (-dz * h) * s, p1z = z2 + (dx * h) * s;
-          const p2x = x2 + (-ez * h) * s, p2z = z2 + (ex * h) * s;
-          const lo1 = [p1x, y - thick, p1z], lo2 = [p2x, y - thick, p2z];
-          const hi1 = [p1x, y, p1z], hi2 = [p2x, y, p2z];
-          const uv = [[0, 0], [0.3, 0], [0.3, 0.1], [0, 0.1]];
-          if (s === 1) mb.quad(lo1, lo2, hi2, hi1, uv, sideColour);
-          else mb.quad(lo2, lo1, hi1, hi2, uv, sideColour);
-        }
-      }
     }
   }
 }
