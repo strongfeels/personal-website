@@ -503,29 +503,7 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     extrudeWalls(mb[wallKey], poly, b.h, b.h + 0.55, tint);
     mb.granite.polyFlat(poly, b.h + 0.58, 3, 0xffffff);
 
-    // A pub reads as a pub because of what hangs off the front of it: the
-    // bracket sign out over the footpath and a lamp either side of the door.
-    if (b.amenity === 'pub' || b.amenity === 'bar') {
-      const ux2 = Math.cos(b.ridge), uz2 = Math.sin(b.ridge);
-      const vx2 = -uz2, vz2 = ux2;
-      const [ul, uh] = projectExtent(poly, ux2, uz2);
-      const [vl, vh] = projectExtent(poly, vx2, vz2);
-      const ccx = ux2 * (ul + uh) / 2 + vx2 * (vl + vh) / 2;
-      const ccz = uz2 * (ul + uh) / 2 + vz2 * (vl + vh) / 2;
-      const f = frontFace(poly, b.facing, ccx, ccz, ux2, uz2, (uh - ul) / 2, (vh - vl) / 2);
-      const yawS = Math.atan2(f.nx, -f.nz);
-      const sy = Math.min(b.h - 1.2, 4.1);
-      // bracket, then the board hanging off it
-      mb.dark.box(f.x + f.nx * 0.42, sy + 0.5, f.z + f.nz * 0.42, 0.5, 0.09, 0.05, yawS, 1, 0x24262a);
-      mb.dark.box(f.x + f.nx * 0.86, sy - 0.42, f.z + f.nz * 0.86, 0.62, 0.92, 0.06, yawS, 1, 0x1d3a2a);
-      mb.trim.box(f.x + f.nx * 0.86, sy - 0.46, f.z + f.nz * 0.86, 0.66, 0.06, 0.08, yawS, 1, 0xd8c48a);
-      for (const s2 of [-1, 1]) {
-        const lx = f.x + f.tx * s2 * 1.5 + f.nx * 0.2;
-        const lz = f.z + f.tz * s2 * 1.5 + f.nz * 0.2;
-        mb.dark.box(lx, 2.55, lz, 0.11, 0.34, 0.11, yawS, 1, 0x1c1e22);
-        mb.glass.box(lx, 2.62, lz, 0.08, 0.2, 0.08, yawS, 1, 0xffe6a8);
-      }
-    }
+    if (b.amenity === 'pub' || b.amenity === 'bar') pubFront(mb, poly, b, wallKey, tint);
   }
 
 
@@ -605,6 +583,92 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
   // other tagged premises were doing the same.
   const TRADE = new Set(['pub', 'bar', 'restaurant', 'cafe', 'fast_food',
                          'bank', 'pharmacy', 'post_office', 'fuel', 'library']);
+
+
+  /**
+   * A Victorian pub front.
+   *
+   * The frontage is joinery, so it is dark and the structure of it shows: a
+   * pilaster between every window bay carrying a deep fascia, a gilt cornice
+   * over that, and glazing bars breaking the shopfront into small panes. The
+   * banding runs round every wall that faces the street, not just the one the
+   * door is on — these are corner buildings and the joinery turns the corner
+   * with them.
+   */
+  function pubFront(mb, poly, b, wallKey, tint) {
+    const ux2 = Math.cos(b.ridge), uz2 = Math.sin(b.ridge);
+    const vx2 = -uz2, vz2 = ux2;
+    const [ul, uh] = projectExtent(poly, ux2, uz2);
+    const [vl, vh] = projectExtent(poly, vx2, vz2);
+    const ccx = ux2 * (ul + uh) / 2 + vx2 * (vl + vh) / 2;
+    const ccz = uz2 * (ul + uh) / 2 + vz2 * (vl + vh) / 2;
+    const wantX = Math.cos(b.facing), wantZ = Math.sin(b.facing);
+    const SHOP = Math.min(3.4, b.h * 0.52);
+    const GILT = 0xcbb27a;
+
+    // Every wall turned even part way towards the street gets the treatment.
+    // A pub on a corner shows two elevations and the joinery runs round both.
+    const faces = [];
+    for (let i = 0; i < poly.length; i++) {
+      const [x1, z1] = poly[i];
+      const [x2, z2] = poly[(i + 1) % poly.length];
+      const ex = x2 - x1, ez = z2 - z1;
+      const len = Math.hypot(ex, ez);
+      if (len < 2.5) continue;
+      const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
+      let nx = ez / len, nz = -ex / len;
+      if ((mx - ccx) * nx + (mz - ccz) * nz < 0) { nx = -nx; nz = -nz; }
+      const facing = nx * wantX + nz * wantZ;
+      if (facing < 0.15) continue;                  // turned away from the street
+      faces.push({ x: mx, z: mz, nx, nz, tx: ex / len, tz: ez / len, w: len, facing });
+    }
+    if (!faces.length) return;
+    faces.sort((a, c) => c.facing * c.w - a.facing * a.w);
+
+    for (const f of faces) {
+      const yaw = Math.atan2(f.nx, -f.nz);
+      const W = f.w;
+      const at = (off, out) => [f.x + f.tx * off + f.nx * out, f.z + f.tz * off + f.nz * out];
+      const board = (off, y, w, h, thick, key, colour) => {
+        if (w <= 0.05) return;
+        const [px, pz] = at(off, thick / 2 + 0.02);
+        mb[key].box(px, y, pz, w / 2, h, thick / 2, yaw, 1, colour);
+      };
+
+      const bays = Math.max(2, Math.round(W / 3.4));
+      for (let k = 0; k <= bays; k++) {
+        const off = -W / 2 + (W * k) / bays;
+        board(off, 0, 0.34, SHOP + 1.5, 0.22, 'dark', 0x22322a);      // pilaster
+        board(off, SHOP + 1.35, 0.5, 0.18, 0.3, 'trim', GILT);        // its capital
+      }
+      board(0, SHOP, W, 1.35, 0.18, 'dark', 0x1d3a2a);                // deep fascia
+      board(0, SHOP + 1.24, W + 0.2, 0.16, 0.3, 'trim', GILT);        // cornice
+      board(0, SHOP + 0.5, W - 0.6, 0.1, 0.24, 'trim', GILT);         // lettering band
+      for (let k = 0; k < bays; k++) {                                // glazing bars
+        const off = -W / 2 + (W * (k + 0.5)) / bays;
+        board(off, 1.65, Math.max(0.4, W / bays - 0.7), 0.07, 0.2, 'trim', 0x2a3a30);
+      }
+    }
+
+    // The door is on the widest street elevation, and what gathers by a door
+    // gathers there too.
+    const f = faces[0];
+    const yaw = Math.atan2(f.nx, -f.nz);
+    const at = (off, out) => [f.x + f.tx * off + f.nx * out, f.z + f.tz * off + f.nz * out];
+    const reach = Math.min(f.w / 2 - 0.6, 2.4);
+    if (reach > 1.0) {
+      for (const s2 of [-1, 1]) {
+        const [bx, bz] = at(s2 * reach, 0.5);
+        mb.dark.box(bx, 0, bz, 0.26, 0.78, 0.26, yaw, 1, 0x6b4a2f);        // barrel
+        mb.trim.box(bx, 0.24, bz, 0.28, 0.05, 0.28, yaw, 1, 0x9a9186);     // its hoop
+        mb.trim.box(bx, 0.56, bz, 0.28, 0.05, 0.28, yaw, 1, 0x9a9186);
+        const [hx, hz] = at(s2 * (reach * 0.62), 0.3);
+        mb.dark.box(hx, 2.62, hz, 0.05, 0.34, 0.05, yaw, 1, 0x1c1e22);     // bracket
+        mb.dark.box(hx, 2.94, hz, 0.24, 0.05, 0.24, yaw, 1, 0x1c1e22);
+        mb.hedge.box(hx, 2.4, hz, 0.28, 0.36, 0.28, yaw, 1, 0xffffff);     // basket
+      }
+    }
+  }
 
   function emitBuilding(mb, b) {
     if (b.type === 'roof') { emitCanopy(mb, b); return; }
