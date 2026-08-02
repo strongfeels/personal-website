@@ -1,6 +1,7 @@
 // Third-person character — a Stick-RPG figure, but with joints that actually swing.
 // The same body serves the player and everyone walking around (see npc.js).
 import * as THREE from '../vendor/three.module.js';
+import { colliderGrid } from './collidergrid.js';
 
 const DEFAULT_LOOK = {
   skin: 0xe8bfa0, top: 0xb8422f, trousers: 0x2b3a55,
@@ -199,38 +200,8 @@ export class PlayerController {
    *  Each one goes in every cell it covers, so a point query only has to look
    *  at the cells it actually touches. Rebuilt when the list changes, which
    *  happens when you get into a car. */
-  _viewGrid() {
-    if (this._grid && this._gridN === this.colliders.length) return this._grid;
-    const G = 16, cells = new Map();
-    for (const c of this.colliders) {
-      const r = c.hx + c.hz;
-      for (let gx = Math.floor((c.x - r) / G); gx <= Math.floor((c.x + r) / G); gx++) {
-        for (let gz = Math.floor((c.z - r) / G); gz <= Math.floor((c.z + r) / G); gz++) {
-          const k = gx + ',' + gz;
-          const a = cells.get(k);
-          if (a) a.push(c); else cells.set(k, [c]);
-        }
-      }
-    }
-    this._gridN = this.colliders.length;
-    return (this._grid = { G, cells });
-  }
+  _viewGrid() { return colliderGrid(this.colliders); }
 
-  /**
-   * Keep the camera where the player put it, unless it would be *inside* a
-   * building.
-   *
-   * This used to stop at the first thing the sight line crossed, which is
-   * technically correct and constantly wrong in practice: walk anywhere near a
-   * house and the line clips its corner while the camera itself is out in the
-   * open, so the view lurched in for no visible reason. Testing the camera's
-   * own position instead means it only moves when it genuinely has to, and the
-   * distance and height you chose are left alone the rest of the time.
-   *
-   * The cost is that a wall can pass between you and the camera. That is a far
-   * smaller problem than the camera being buried in a house, which is what
-   * made walls vanish, and which this still prevents.
-   */
   _camDistClamped() {
     const cy = Math.cos(this.camPitch);
     const dx = Math.sin(this.camYaw) * cy, dz = Math.cos(this.camYaw) * cy;

@@ -41,6 +41,7 @@ export class TouchControls {
       <div id="t-buttons">
         <button id="t-car" class="t-btn t-wide">Car</button>
         <button id="t-view" class="t-btn t-wide">1st person</button>
+        <button id="t-sound" class="t-btn t-wide">\u{1F50A} Sound</button>
         <div class="t-row" id="t-onfoot">
           <button id="t-run" class="t-btn">Run</button>
           <button id="t-jump" class="t-btn">Jump</button>
@@ -76,6 +77,7 @@ export class TouchControls {
     };
     tap('#t-car', 'car');
     tap('#t-view', 'view');
+    tap('#t-sound', 'sound');
 
     // the stick
     this.stick.addEventListener('touchstart', (e) => {
@@ -171,6 +173,12 @@ export class TouchControls {
       b.textContent = on ? '3rd person' : '1st person';
       b.classList.toggle('active', on);
     }
+  }
+
+  /** Reflect the mute state on the sound button. */
+  setMuted(muted) {
+    const b = document.getElementById('t-sound');
+    if (b) b.textContent = muted ? '\u{1F507} Muted' : '\u{1F50A} Sound';
   }
 
   /** Swap the car button's label, and put away the on-foot buttons. */

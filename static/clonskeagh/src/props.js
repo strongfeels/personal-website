@@ -1,6 +1,6 @@
 // Trees, parked cars, wheelie bins — instanced, so hundreds cost almost nothing.
 import * as THREE from '../vendor/three.module.js';
-import { carBodyGeometry, wheelGeometry } from './vehicle.js';
+import { carBodyGeometry, wheelGeometry, CAR } from './vehicle.js';
 
 function hash01(i, salt = 0) {
   let h = (i * 374761393 + salt * 668265263) >>> 0;
@@ -188,7 +188,10 @@ export function addCars(world, scene, colliders) {
       wheels.setMatrixAt(wi++, m);
     }
     // the car's long axis points along (sin yaw, cos yaw); collider x-axis must match
-    colliders.push({ x, z, hx: 2.2, hz: 0.95, yaw: Math.PI / 2 - yaw });
+    // Match the body, not a box around it. This used to be 2.2 x 0.95 for a
+    // car that is 4.24 x 1.78, and the driving test padded it again — so you
+    // "hit" a parked car with 20cm of clear air still showing.
+    colliders.push({ x, z, hx: CAR.len / 2, hz: CAR.wid / 2, yaw: Math.PI / 2 - yaw });
   });
   scene.add(cars, wheels);
   // handed back so one of these can be taken over and driven away

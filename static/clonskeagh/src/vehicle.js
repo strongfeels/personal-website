@@ -5,6 +5,7 @@
 // lanes (one each way) which are linked end-to-end at junctions, so cars turn
 // corners rather than teleport.
 import * as THREE from '../vendor/three.module.js';
+import { colliderGrid } from './collidergrid.js';
 
 export const CAR = { len: 4.24, wid: 1.78, wheelR: 0.33, wheelbase: 2.6 };
 
@@ -429,19 +430,39 @@ export class Drive {
     this.sync();
   }
 
+  /** Colliders bucketed by location. Without this, every frame behind the wheel
+   *  tested five corners against all hundred-and-thirty thousand of them, which
+   *  cost 3.7ms a frame on its own. (PlayerController keeps its own copy of this
+   *  for walking; the two lists are the same array but the classes are apart.) */
+  _grid() { return colliderGrid(this.colliders); }
+
   /** Corners of the car against the world's boxes. */
   blocked(x, z) {
     const c = Math.cos(this.yaw), s = Math.sin(this.yaw);
     const hl = CAR.len / 2, hw = CAR.wid / 2;
+    // 4cm, not 15. The old margin plus an oversized parked-car box meant you
+    // stopped dead with a fifth of a metre of daylight still showing.
+    const PAD = 0.04;
+    const { G, cells } = this._grid();
     for (const [ox, oz] of [[hw, hl], [-hw, hl], [hw, -hl], [-hw, -hl], [0, hl]]) {
       const px = x + ox * c + oz * s;
       const pz = z - ox * s + oz * c;
-      for (const o of this.colliders) {
-        const dx = px - o.x, dz = pz - o.z;
-        if (Math.abs(dx) > o.hx + o.hz + 3 || Math.abs(dz) > o.hx + o.hz + 3) continue;
-        const co = Math.cos(-o.yaw), si = Math.sin(-o.yaw);
-        const lx = dx * co - dz * si, lz = dx * si + dz * co;
-        if (Math.abs(lx) < o.hx + 0.15 && Math.abs(lz) < o.hz + 0.15) return true;
+      // Every collider is registered in each cell it covers, so a point test
+      // only has to look at the cells the point itself touches — usually one.
+      const gx0 = Math.floor((px - PAD) / G), gx1 = Math.floor((px + PAD) / G);
+      const gz0 = Math.floor((pz - PAD) / G), gz1 = Math.floor((pz + PAD) / G);
+      for (let ix = gx0; ix <= gx1; ix++) {
+        for (let iz = gz0; iz <= gz1; iz++) {
+          const bucket = cells.get(ix + ',' + iz);
+          if (!bucket) continue;
+          for (const o of bucket) {
+            const dx = px - o.x, dz = pz - o.z;
+            if (Math.abs(dx) > o.hx + o.hz + 3 || Math.abs(dz) > o.hx + o.hz + 3) continue;
+            const co = Math.cos(-o.yaw), si = Math.sin(-o.yaw);
+            const lx = dx * co - dz * si, lz = dx * si + dz * co;
+            if (Math.abs(lx) < o.hx + PAD && Math.abs(lz) < o.hz + PAD) return true;
+          }
+        }
       }
     }
     return false;

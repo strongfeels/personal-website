@@ -119,6 +119,16 @@ let touch = null;
 let labels = [];
 const clock = new THREE.Clock();
 
+function toggleSound() {
+  sound.start();                       // a tap counts as the gesture browsers want
+  const on = sound.toggle();
+  hud.audio.textContent = on ? '\u{1F50A} sound on' : '\u{1F507} muted';
+  hud.audio.style.opacity = 1;
+  setTimeout(() => { hud.audio.style.opacity = 0; }, 1400);
+  if (touch) touch.setMuted(!on);
+  return on;
+}
+
 async function boot() {
   hud.loadingText.textContent = 'Reading Clonskeagh…';
   worldData = await (await fetch('./world.json')).json();
@@ -159,6 +169,8 @@ async function boot() {
       } else if (action === 'view') {
         controller.firstPerson = !controller.firstPerson;
         touch.setFirstPerson(controller.firstPerson);
+      } else if (action === 'sound') {
+        toggleSound();
       }
     });
   }
@@ -483,12 +495,7 @@ for (const ev of ['pointerdown', 'keydown']) {
 
 addEventListener('keydown', (e) => {
   if (!controller) return;
-  if (e.code === 'KeyP') {
-    const on = sound.toggle();
-    hud.audio.textContent = on ? '\u{1F50A} sound on' : '\u{1F507} muted';
-    hud.audio.style.opacity = 1;
-    setTimeout(() => { hud.audio.style.opacity = 0; }, 1400);
-  }
+  if (e.code === 'KeyP') toggleSound();
   if (e.code === 'KeyE') { if (drive) exitCar(); else enterCar(); }
   if (e.code === 'KeyN') applySky(skyMode === 'day' ? 'dusk' : skyMode === 'dusk' ? 'night' : 'day');
   if (e.code === 'KeyF') {
