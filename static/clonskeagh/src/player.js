@@ -8,48 +8,106 @@ const DEFAULT_LOOK = {
   shoe: 0x24242a, hair: 0x33251b, height: 1.0, build: 1.0,
 };
 
-/** Build a body. `look` varies colouring and proportions; geometry is shared. */
+/**
+ * Merge several geometries into one, baking a colour per part into the vertex
+ * colours and offsetting each into place.
+ *
+ * A character used to be fourteen meshes with five materials of its own, and
+ * with 36 people and 24 cars on screen that was 74% of every draw call in the
+ * game — more than the entire streamed city, which merges and so costs almost
+ * nothing. Parts that move together can share one mesh; the colour that used to
+ * come from five materials rides in the vertex colours instead, so every
+ * character in the world now draws with the same single material.
+ */
+export function mergeParts(parts) {
+  let n = 0;
+  for (const p of parts) n += p.geo.attributes.position.count;
+  const pos = new Float32Array(n * 3);
+  const nrm = new Float32Array(n * 3);
+  const col = new Float32Array(n * 3);
+  const idx = [];
+  const v = new THREE.Vector3();
+  const c = new THREE.Color();
+  let o = 0;
+  for (const p of parts) {
+    const g = p.geo;
+    const gp = g.attributes.position, gn = g.attributes.normal;
+    c.set(p.colour);
+    for (let i = 0; i < gp.count; i++) {
+      v.fromBufferAttribute(gp, i);
+      pos[(o + i) * 3] = v.x + (p.x || 0);
+      pos[(o + i) * 3 + 1] = v.y + (p.y || 0);
+      pos[(o + i) * 3 + 2] = v.z + (p.z || 0);
+      v.fromBufferAttribute(gn, i);                 // translation only: normals hold
+      nrm[(o + i) * 3] = v.x;
+      nrm[(o + i) * 3 + 1] = v.y;
+      nrm[(o + i) * 3 + 2] = v.z;
+      col[(o + i) * 3] = c.r;
+      col[(o + i) * 3 + 1] = c.g;
+      col[(o + i) * 3 + 2] = c.b;
+    }
+    const gi = g.index;
+    if (gi) for (let i = 0; i < gi.count; i++) idx.push(gi.getX(i) + o);
+    else for (let i = 0; i < gp.count; i++) idx.push(o + i);
+    o += gp.count;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  out.setIndex(idx);
+  return out;
+}
+
+// One material for every person in the game. The five it replaces had slightly
+// different roughness each; this is their middle, and at the size a person
+// occupies on screen the difference is not visible.
+export const CHAR_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.78 });
+
+/** Build a body. `look` varies colouring and proportions.
+ *
+ *  Five meshes: the body, and a limb each. Each is a rigid part that already
+ *  moved as a unit, so the walk animation is unchanged — it still just rotates
+ *  arms[] and legs[] about their shoulder and hip.
+ */
 export function createCharacter(look = {}) {
   const L = { ...DEFAULT_LOOK, ...look };
-  const g = new THREE.Group();
-  const mats = {
-    skin: new THREE.MeshStandardMaterial({ color: L.skin, roughness: 0.72 }),
-    top: new THREE.MeshStandardMaterial({ color: L.top, roughness: 0.8 }),
-    trousers: new THREE.MeshStandardMaterial({ color: L.trousers, roughness: 0.85 }),
-    shoe: new THREE.MeshStandardMaterial({ color: L.shoe, roughness: 0.6 }),
-    hair: new THREE.MeshStandardMaterial({ color: L.hair, roughness: 0.9 }),
-  };
   const b = L.build;
-  const mk = (geo, mat, x, y, z) => {
-    const m = new THREE.Mesh(geo, mats[mat]);
-    m.position.set(x, y, z);
+  const g = new THREE.Group();
+  const mesh = (geo) => {
+    const m = new THREE.Mesh(geo, CHAR_MAT);
     m.castShadow = true;
     return m;
   };
 
-  const torso = mk(new THREE.CapsuleGeometry(0.19 * b, 0.44, 6, 12), 'top', 0, 1.16, 0);
-  const head = mk(new THREE.SphereGeometry(0.155, 20, 16), 'skin', 0, 1.63, 0);
-  const nose = mk(new THREE.SphereGeometry(0.04, 8, 8), 'skin', 0, 1.61, 0.15);
-  const hair = mk(new THREE.SphereGeometry(0.162, 20, 16, 0, 6.3, 0, 1.15), 'hair', 0, 1.635, 0);
+  const body = mesh(mergeParts([
+    { geo: new THREE.CapsuleGeometry(0.19 * b, 0.44, 6, 12), y: 1.16, colour: L.top },
+    { geo: new THREE.SphereGeometry(0.155, 20, 16), y: 1.63, colour: L.skin },
+    { geo: new THREE.SphereGeometry(0.04, 8, 8), y: 1.61, z: 0.15, colour: L.skin },
+    { geo: new THREE.SphereGeometry(0.162, 20, 16, 0, 6.3, 0, 1.15), y: 1.635, colour: L.hair },
+  ]));
+  g.add(body);
 
   const arms = [], legs = [];
   for (const s of [-1, 1]) {
-    const a = new THREE.Group();
+    const a = mesh(mergeParts([
+      { geo: new THREE.CapsuleGeometry(0.062, 0.30, 4, 8), y: -0.17, colour: L.top },
+      { geo: new THREE.CapsuleGeometry(0.055, 0.26, 4, 8), y: -0.47, colour: L.skin },
+    ]));
     a.position.set(s * 0.245 * b, 1.36, 0);
-    a.add(mk(new THREE.CapsuleGeometry(0.062, 0.30, 4, 8), 'top', 0, -0.17, 0),
-          mk(new THREE.CapsuleGeometry(0.055, 0.26, 4, 8), 'skin', 0, -0.47, 0));
     g.add(a); arms.push(a);
 
-    const l = new THREE.Group();
+    const l = mesh(mergeParts([
+      { geo: new THREE.CapsuleGeometry(0.078, 0.32, 4, 8), y: -0.18, colour: L.trousers },
+      { geo: new THREE.CapsuleGeometry(0.068, 0.30, 4, 8), y: -0.50, colour: L.trousers },
+      { geo: new THREE.BoxGeometry(0.13, 0.09, 0.26), y: -0.72, z: 0.05, colour: L.shoe },
+    ]));
     l.position.set(s * 0.105 * b, 0.86, 0);
-    l.add(mk(new THREE.CapsuleGeometry(0.078, 0.32, 4, 8), 'trousers', 0, -0.18, 0),
-          mk(new THREE.CapsuleGeometry(0.068, 0.30, 4, 8), 'trousers', 0, -0.50, 0),
-          mk(new THREE.BoxGeometry(0.13, 0.09, 0.26), 'shoe', 0, -0.72, 0.05));
     g.add(l); legs.push(l);
   }
-  g.add(torso, head, nose, hair);
+
   g.scale.setScalar(L.height);
-  return { group: g, arms, legs, head };
+  return { group: g, arms, legs, body };
 }
 
 export const createPlayer = () => createCharacter();

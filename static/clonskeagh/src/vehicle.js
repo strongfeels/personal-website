@@ -6,6 +6,7 @@
 // corners rather than teleport.
 import * as THREE from '../vendor/three.module.js';
 import { colliderGrid } from './collidergrid.js';
+import { mergeParts, CHAR_MAT } from './player.js';
 
 export const CAR = { len: 4.24, wid: 1.78, wheelR: 0.33, wheelbase: 2.6 };
 
@@ -63,16 +64,25 @@ function mergeSimple(geos) {
  * A car you can see up close: shell, glazing, lights, and four wheels that
  * steer and spin. Local +Z is the way it faces.
  */
+// Only the paint differs from car to car. The glass, trim, lamps and tyres were
+// being minted fresh for every one of the two dozen on the road, which is a
+// shader binding each rather than one shared between them. The geometry is
+// deliberately NOT merged: the windows want reflection, the lamps want to glow
+// and the paint wants metalness, and flattening those into one material to save
+// a few draw calls would cost more than it buys.
+const CAR_GLASS = new THREE.MeshStandardMaterial({
+  color: 0x223038, roughness: 0.08, metalness: 0.6, envMapIntensity: 2.0 });
+const CAR_TRIM = new THREE.MeshStandardMaterial({ color: 0x1c1c1f, roughness: 0.7 });
+const CAR_LAMP_F = new THREE.MeshStandardMaterial({
+  color: 0xfff4d6, emissive: 0xfff0c0, emissiveIntensity: 0.35, roughness: 0.3 });
+const CAR_LAMP_R = new THREE.MeshStandardMaterial({
+  color: 0x8b1a1a, emissive: 0xd02020, emissiveIntensity: 0.35, roughness: 0.3 });
+const CAR_TYRE = new THREE.MeshStandardMaterial({ color: 0x151517, roughness: 0.9 });
+
 export function makeCar(colour, seed = 0, withDriver = true) {
   const g = new THREE.Group();
   const paint = new THREE.MeshStandardMaterial({ color: colour, roughness: 0.3, metalness: 0.5 });
-  const glass = new THREE.MeshStandardMaterial({
-    color: 0x223038, roughness: 0.08, metalness: 0.6, envMapIntensity: 2.0 });
-  const trimM = new THREE.MeshStandardMaterial({ color: 0x1c1c1f, roughness: 0.7 });
-  const lampF = new THREE.MeshStandardMaterial({
-    color: 0xfff4d6, emissive: 0xfff0c0, emissiveIntensity: 0.35, roughness: 0.3 });
-  const lampR = new THREE.MeshStandardMaterial({
-    color: 0x8b1a1a, emissive: 0xd02020, emissiveIntensity: 0.35, roughness: 0.3 });
+  const glass = CAR_GLASS, trimM = CAR_TRIM, lampF = CAR_LAMP_F, lampR = CAR_LAMP_R;
 
   const shell = new THREE.Mesh(carBodyGeometry(), paint);
   shell.castShadow = shell.receiveShadow = true;
@@ -96,7 +106,7 @@ export function makeCar(colour, seed = 0, withDriver = true) {
 
   const wheels = [];
   const wg = wheelGeometry();
-  const wm = new THREE.MeshStandardMaterial({ color: 0x151517, roughness: 0.9 });
+  const wm = CAR_TYRE;
   for (const [wx, wz] of [[0.82, 1.3], [-0.82, 1.3], [0.82, -1.3], [-0.82, -1.3]]) {
     const w = new THREE.Mesh(wg, wm);
     w.position.set(wx, CAR.wheelR, wz);
@@ -109,21 +119,18 @@ export function makeCar(colour, seed = 0, withDriver = true) {
   if (withDriver) {
     // Only the head and shoulders show above the door line, so a full 14-mesh
     // character per car is ~250 meshes of nothing. Three will do.
+    // three meshes and three materials each, twenty-four times over, for
+    // something only visible from the shoulders up — merged into one, on the
+    // same material every person in the game uses
     driver = new THREE.Group();
-    const skin = new THREE.MeshStandardMaterial({
-      color: SKINS[Math.floor(hash01(seed, 1) * SKINS.length)], roughness: 0.72 });
-    const top = new THREE.MeshStandardMaterial({
-      color: TOPS[Math.floor(hash01(seed, 2) * TOPS.length)], roughness: 0.8 });
-    const hairM = new THREE.MeshStandardMaterial({ color: 0x33251b, roughness: 0.9 });
-
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.34, 4, 10), top);
-    torso.position.y = 0.98;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.145, 14, 12), skin);
-    head.position.y = 1.36;
-    const hair = new THREE.Mesh(
-      new THREE.SphereGeometry(0.152, 14, 12, 0, 6.3, 0, 1.1), hairM);
-    hair.position.y = 1.365;
-    driver.add(torso, head, hair);
+    const skin = SKINS[Math.floor(hash01(seed, 1) * SKINS.length)];
+    const top = TOPS[Math.floor(hash01(seed, 2) * TOPS.length)];
+    const bust = new THREE.Mesh(mergeParts([
+      { geo: new THREE.CapsuleGeometry(0.17, 0.34, 4, 10), y: 0.98, colour: top },
+      { geo: new THREE.SphereGeometry(0.145, 14, 12), y: 1.36, colour: skin },
+      { geo: new THREE.SphereGeometry(0.152, 14, 12, 0, 6.3, 0, 1.1), y: 1.365, colour: 0x33251b },
+    ]), CHAR_MAT);
+    driver.add(bust);
 
     // Local +z is forward and +y is up, so starboard is -x: right-hand drive,
     // as in Ireland.
