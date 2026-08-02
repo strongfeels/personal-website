@@ -502,6 +502,30 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     // a parapet, since these are flat-roofed
     extrudeWalls(mb[wallKey], poly, b.h, b.h + 0.55, tint);
     mb.granite.polyFlat(poly, b.h + 0.58, 3, 0xffffff);
+
+    // A pub reads as a pub because of what hangs off the front of it: the
+    // bracket sign out over the footpath and a lamp either side of the door.
+    if (b.amenity === 'pub' || b.amenity === 'bar') {
+      const ux2 = Math.cos(b.ridge), uz2 = Math.sin(b.ridge);
+      const vx2 = -uz2, vz2 = ux2;
+      const [ul, uh] = projectExtent(poly, ux2, uz2);
+      const [vl, vh] = projectExtent(poly, vx2, vz2);
+      const ccx = ux2 * (ul + uh) / 2 + vx2 * (vl + vh) / 2;
+      const ccz = uz2 * (ul + uh) / 2 + vz2 * (vl + vh) / 2;
+      const f = frontFace(poly, b.facing, ccx, ccz, ux2, uz2, (uh - ul) / 2, (vh - vl) / 2);
+      const yawS = Math.atan2(f.nx, -f.nz);
+      const sy = Math.min(b.h - 1.2, 4.1);
+      // bracket, then the board hanging off it
+      mb.dark.box(f.x + f.nx * 0.42, sy + 0.5, f.z + f.nz * 0.42, 0.5, 0.09, 0.05, yawS, 1, 0x24262a);
+      mb.dark.box(f.x + f.nx * 0.86, sy - 0.42, f.z + f.nz * 0.86, 0.62, 0.92, 0.06, yawS, 1, 0x1d3a2a);
+      mb.trim.box(f.x + f.nx * 0.86, sy - 0.46, f.z + f.nz * 0.86, 0.66, 0.06, 0.08, yawS, 1, 0xd8c48a);
+      for (const s2 of [-1, 1]) {
+        const lx = f.x + f.tx * s2 * 1.5 + f.nx * 0.2;
+        const lz = f.z + f.tz * s2 * 1.5 + f.nz * 0.2;
+        mb.dark.box(lx, 2.55, lz, 0.11, 0.34, 0.11, yawS, 1, 0x1c1e22);
+        mb.glass.box(lx, 2.62, lz, 0.08, 0.2, 0.08, yawS, 1, 0xffe6a8);
+      }
+    }
   }
 
 
@@ -574,6 +598,13 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
 
   // landmark classes that keep the arcaded, period elevation
   const PERIOD = new Set(['church', 'mosque', 'school']);
+
+  // A building that trades gets a shopfront, whatever the bake made of it.
+  // Ashtons is tagged amenity=pub and nothing else, so it was landing on the
+  // house treatment — one front door and a bay window on a 27x39m pub — and 59
+  // other tagged premises were doing the same.
+  const TRADE = new Set(['pub', 'bar', 'restaurant', 'cafe', 'fast_food',
+                         'bank', 'pharmacy', 'post_office', 'fuel', 'library']);
 
   function emitBuilding(mb, b) {
     if (b.type === 'roof') { emitCanopy(mb, b); return; }
@@ -681,7 +712,8 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     // ---- landmarks get arcaded elevations, not a semi-d's door and bay
     if (b.lm === 'hospital') {
       victorianWalls(mb, poly, b);
-    } else if (b.lm === 'commercial' && b.h >= 4) {
+    } else if ((b.lm === 'commercial' || TRADE.has(b.amenity)) && b.h >= 4
+               && !PERIOD.has(b.lm)) {
       commercialWalls(mb, poly, b, wallKey, tint);
     } else if (!isOut && !PERIOD.has(b.lm)
                && (b.lm === 'university' || b.levels >= 3 || b.h >= 9)) {
