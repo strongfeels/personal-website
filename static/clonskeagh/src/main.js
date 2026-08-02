@@ -145,8 +145,8 @@ async function boot() {
     .catch(() => ({ courses: [] }));
   // front boundaries measured off the imagery, where one was actually found
   const frontage = await fetch('./frontage.json')
-    .then((r) => (r.ok ? r.json() : { hedges: [] }))
-    .catch(() => ({ hedges: [] }));
+    .then((r) => (r.ok ? r.json() : { frontages: [] }))
+    .catch(() => ({ frontages: [] }));
 
   hud.loadingText.textContent = 'Mixing mortar…';
   await frame();

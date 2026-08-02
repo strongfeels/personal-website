@@ -139,7 +139,7 @@ function projectExtent(poly, ax, az) {
 export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
                            veg = { trees: [], hedges: [] },
                            golf = { courses: [] },
-                           frontage = { hedges: [] }) {
+                           frontage = { frontages: [] }) {
   // buildings carrying detected domes are flat-roofed underneath them
   const domed = new Map();
   for (const L of landmarks.landmarks || []) {
@@ -590,10 +590,13 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
    *
    * The frontage is joinery, so it is dark and the structure of it shows: a
    * pilaster between every window bay carrying a deep fascia, a gilt cornice
-   * over that, and glazing bars breaking the shopfront into small panes. The
-   * banding runs round every wall that faces the street, not just the one the
-   * door is on — these are corner buildings and the joinery turns the corner
-   * with them.
+   * over that, and glazing bars breaking the shopfront into small panes.
+   *
+   * The banding goes on EVERY wall, not the ones judged to face the street.
+   * That judgement comes from the baked `facing`, which is derived from the
+   * nearest road, and it picks the wrong side often enough to matter — a pub
+   * with its frontage round the back is far worse than one whose joinery
+   * carries on where nobody looks. Eleven buildings, 99 walls; it is nothing.
    */
   function pubFront(mb, poly, b, wallKey, tint) {
     const ux2 = Math.cos(b.ridge), uz2 = Math.sin(b.ridge);
@@ -994,11 +997,15 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
   const wallsFor = new Map();          // building id -> segments to draw
   {
     // Where the imagery actually found a hedge along a frontage, use it instead
-    // of the invented wall: measured position, measured width. 474 of them. The
-    // detector's `wall` class is not shipped — a narrow pale line is just as
-    // good a description of a driveway, and most of what it found were drives.
+    // of the invented wall: measured position, measured width. The detector's
+    // `wall` class is dropped — a narrow pale line describes a driveway just as
+    // well, and most of what it found were drives. That filter has to happen
+    // HERE, over the `frontages` the detector actually writes; reading a `hedges`
+    // key it has never emitted quietly threw away every one of them.
     const measured = new Map();
-    for (const h of frontage.hedges || []) measured.set(h.id, h);
+    for (const h of frontage.frontages || []) {
+      if (h.kind === 'hedge') measured.set(h.id, h);
+    }
     const laid = [];                   // everything accepted so far, for crossing tests
     const GW = 24, gwGrid = new Map();
     const add = (seg) => {
