@@ -143,6 +143,10 @@ async function boot() {
   const golf = await fetch('./golf.json')
     .then((r) => (r.ok ? r.json() : { courses: [] }))
     .catch(() => ({ courses: [] }));
+  // front boundaries measured off the imagery, where one was actually found
+  const frontage = await fetch('./frontage.json')
+    .then((r) => (r.ok ? r.json() : { hedges: [] }))
+    .catch(() => ({ hedges: [] }));
 
   hud.loadingText.textContent = 'Mixing mortar…';
   await frame();
@@ -150,7 +154,7 @@ async function boot() {
 
   hud.loadingText.textContent = `Placing ${worldData.meta.counts.buildings} buildings…`;
   await frame();
-  const built = buildWorld(worldData, materials, scene, marks, veg, golf);
+  const built = buildWorld(worldData, materials, scene, marks, veg, golf, frontage);
   labels = built.labels;
   world = built;
 

@@ -138,7 +138,8 @@ function projectExtent(poly, ax, az) {
 
 export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
                            veg = { trees: [], hedges: [] },
-                           golf = { courses: [] }) {
+                           golf = { courses: [] },
+                           frontage = { hedges: [] }) {
   // buildings carrying detected domes are flat-roofed underneath them
   const domed = new Map();
   for (const L of landmarks.landmarks || []) {
@@ -503,6 +504,77 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     mb.granite.polyFlat(poly, b.h + 0.58, 3, 0xffffff);
   }
 
+
+  /**
+   * A residential block — apartments, student halls, anything several storeys
+   * over a large footprint.
+   *
+   * 404 of these were taking the house treatment: one front door and a bay
+   * window, which on UCD Village's 84x78m seven-storey slab is a blank wall the
+   * size of a football pitch. They need what a block actually has — the same
+   * window, repeated on a grid, on every elevation — plus a way in at the
+   * bottom and something to finish the top.
+   *
+   * The storey height, the footprint and which wall faces the street are from
+   * the data. The bay spacing is not; it is a regular rhythm at a believable
+   * pitch rather than a survey of any particular building.
+   */
+  function blockWalls(mb, poly, b, wallKey, tint) {
+    const FLOOR = 3.0;                            // storey to storey
+    const floors = Math.max(1, Math.min(14, Math.round(b.h / FLOOR)));
+    const glassCol = 0xffffff;
+
+    for (let i = 0; i < poly.length; i++) {
+      const [x1, z1] = poly[i];
+      const [x2, z2] = poly[(i + 1) % poly.length];
+      const ex = x2 - x1, ez = z2 - z1;
+      const len = Math.hypot(ex, ez);
+      if (len < 2.6) continue;
+      const tx = ex / len, tz = ez / len;
+      const nx = ez / len, nz = -ex / len;        // outward
+      const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
+      const yaw = Math.atan2(nx, -nz);
+      const face = (off, y, w, h, key, colour, proud) => {
+        const ax = mx + tx * (off - w / 2) + nx * proud, az = mz + tz * (off - w / 2) + nz * proud;
+        const bx = mx + tx * (off + w / 2) + nx * proud, bz = mz + tz * (off + w / 2) + nz * proud;
+        mb[key].quad([bx, y, bz], [ax, y, az], [ax, y + h, az], [bx, y + h, bz],
+                     [[0, 0], [1, 0], [1, 1], [0, 1]], colour);
+      };
+
+      const bays = Math.max(1, Math.round(len / 3.6));
+      const pitch = len / bays;
+      for (let f = 0; f < floors; f++) {
+        const sill = f * FLOOR + 1.0;
+        if (sill + 1.5 > b.h) break;
+        // a band between storeys, which is what stops it reading as one slab
+        if (f > 0) face(0, f * FLOOR - 0.16, len - 0.1, 0.3, 'trim', 0xdedad0, 0.04);
+        for (let k = 0; k < bays; k++) {
+          const off = -len / 2 + pitch * (k + 0.5);
+          const w = Math.min(1.6, pitch - 1.1);
+          if (w < 0.7) continue;
+          face(off, sill - 0.1, w + 0.24, 1.7, 'trim', 0xf0ede6, 0.05);
+          face(off, sill, w, 1.5, 'glass', glassCol, 0.07);
+          face(off, sill + 0.72, w, 0.06, 'trim', 0xf0ede6, 0.09);   // transom
+        }
+      }
+
+      // a way in, on the longer elevations only
+      if (len > 9) {
+        const doorCol = DOOR_COLOURS[Math.floor(hash01(b.id, 5) * DOOR_COLOURS.length)];
+        face(0, 0.0, 2.3, 2.5, 'dark', 0x2f3338, 0.06);
+        face(0, 0.0, 1.9, 2.25, 'glass', glassCol, 0.08);
+        face(0, 2.5, 2.8, 0.22, 'trim', 0xe6e2d8, 0.12);              // canopy
+        face(-1.55, 0.0, 0.22, 2.5, 'door', doorCol, 0.08);
+      }
+    }
+
+    extrudeWalls(mb[wallKey], poly, b.h, b.h + 0.6, tint);            // parapet
+    mb.granite.polyFlat(poly, b.h + 0.63, 3, 0xffffff);
+  }
+
+  // landmark classes that keep the arcaded, period elevation
+  const PERIOD = new Set(['church', 'mosque', 'school']);
+
   function emitBuilding(mb, b) {
     if (b.type === 'roof') { emitCanopy(mb, b); return; }
     const poly = b.poly;
@@ -611,6 +683,16 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
       victorianWalls(mb, poly, b);
     } else if (b.lm === 'commercial' && b.h >= 4) {
       commercialWalls(mb, poly, b, wallKey, tint);
+    } else if (!isOut && !PERIOD.has(b.lm)
+               && (b.lm === 'university' || b.levels >= 3 || b.h >= 9)) {
+      // Universities here are 1960s faculty blocks — Sutherland and Quinn are
+      // 70m and 97m across, and the arcade treatment written for period
+      // buildings gives them almost nothing — so they come here regardless of
+      // height. Churches, the mosque and the schools do NOT: a nine-metre
+      // church caught by a height test would get a residential window grid,
+      // which is what PERIOD is there to prevent. It was catching 24 of the 26
+      // churches, the Miraculous Medal among them.
+      blockWalls(mb, poly, b, wallKey, tint);
     } else if (b.lm && b.lm !== 'commercial' && b.lm !== 'apartments') {
       arcadeWalls(mb, poly, b, wallKey, tint);
     } else if (!isOut) {
@@ -816,6 +898,12 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
   // first, which anything order-dependent would.
   const wallsFor = new Map();          // building id -> segments to draw
   {
+    // Where the imagery actually found a hedge along a frontage, use it instead
+    // of the invented wall: measured position, measured width. 474 of them. The
+    // detector's `wall` class is not shipped — a narrow pale line is just as
+    // good a description of a driveway, and most of what it found were drives.
+    const measured = new Map();
+    for (const h of frontage.hedges || []) measured.set(h.id, h);
     const laid = [];                   // everything accepted so far, for crossing tests
     const GW = 24, gwGrid = new Map();
     const add = (seg) => {
@@ -860,13 +948,17 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
       const end = Math.max(0.6, d - rw / 2 - 1.9);
       if (end <= 2.4) continue;
 
-      const bx = face.x + dirx * end, bz = face.z + dirz * end;
-      const wx = -dirz, wz = dirx;                 // along the street
+      const seen = measured.get(b.id);
+      const bx = seen ? seen.x : face.x + dirx * end;
+      const bz = seen ? seen.z : face.z + dirz * end;
+      const wx = seen ? seen.tx : -dirz;           // along the street
+      const wz = seen ? seen.tz : dirx;
       const yaw = Math.atan2(wz, wx);
-      const half = Math.min(face.w / 2 + 0.5, 9);
+      const half = Math.min((seen ? seen.w : face.w) / 2 + 0.5, 9);
       const gate = 1.0;
-      const style = hash01(b.id, 21);
-      const h = 0.62 + hash01(b.id, 22) * 0.26;    // a touch taller than before
+      // a measured frontage is a hedge by definition; the rest keep the mix
+      const style = seen ? 0.0 : hash01(b.id, 21);
+      const h = 0.62 + hash01(b.id, 22) * 0.26;
       const out = [];
       for (const [a0, a1] of [[-half, -gate], [gate, half]]) {
         const len = a1 - a0;
