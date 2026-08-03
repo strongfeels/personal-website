@@ -410,6 +410,26 @@ function bankParts(streams) {
 
 const STOP_YELLOW = 0xf2c317, STOP_GREEN = 0x1f7a3d, STOP_STEEL = 0xacb3b8;
 const SHELTER_FRAME = 0x3c4348, SHELTER_ROOF = 0x5b6469;
+const SHELTER_W = 3.9, SHELTER_D = 1.45, SHELTER_H = 2.42;
+
+/**
+ * A pharmacy cross, hung off the shopfront.
+ *
+ * The one shop sign in Ireland that is genuinely standardised — the same green
+ * cross in every town — so it is worth drawing where a shop name would be
+ * guesswork. It projects from the wall and is read from ALONG the street rather
+ * than square on, which is why the arms lie in the YZ plane: the flat of the
+ * cross faces up and down the pavement, not out at the road.
+ *
+ * Local +Z is the way the building faces, so +Z is out from the wall.
+ */
+const PHARMACY_GREEN = 0x18a04a, SIGN_BRACKET = 0x2b3034;
+const PHARMACY_CROSS = [
+  [0, 3.40, 0.11, 0.06, 0.07, 0.22, SIGN_BRACKET],       // stub to the wall
+  [0, 3.40, 0.54, 0.07, 0.88, 0.28, PHARMACY_GREEN],     // upright
+  [0, 3.40, 0.54, 0.07, 0.28, 0.88, PHARMACY_GREEN],     // crossbar
+];
+const ONE = new THREE.Vector3(1, 1, 1);
 
 /**
  * The rest of a bus stop: the carousel, and a shelter where there is one.
@@ -424,19 +444,37 @@ const SHELTER_FRAME = 0x3c4348, SHELTER_ROOF = 0x5b6469;
  */
 function busStopExtras(sheltered) {
   const out = [];
-  // carousel: a drum on the pole, drawn as a squat box — at this size the
-  // difference between a 12-sided drum and a box is not visible, and this way
-  // it rides the heads mesh instead of needing its own
-  out.push([0, 1.32, 0, 0.30, 0.44, 0.30, STOP_YELLOW]);
-  if (!sheltered) return out;
-  const W = 3.9, D = 1.45, H = 2.42;
-  out.push([0, H + 0.06, 0.05, W, 0.12, D + 0.30, SHELTER_ROOF]);          // roof
-  out.push([0, H / 2, D / 2, W, H, 0.06, 0x9fb6c4]);                        // back glazing
-  for (const sx of [-1, 1]) {
-    out.push([sx * (W / 2 - 0.05), H / 2, D / 2 - 0.03, 0.09, H, 0.09, SHELTER_FRAME]);
+  if (!sheltered) {
+    // carousel: a drum on the pole, drawn as a squat box — at this size the
+    // difference between a 12-sided drum and a box is not visible, and this way
+    // it rides the heads mesh instead of needing its own
+    out.push([0, 1.32, 0, 0.30, 0.44, 0.30, STOP_YELLOW]);
+    return out;
   }
-  out.push([-W / 2 + 0.04, H / 2, 0, 0.06, H, D, 0x9fb6c4]);                // one end panel
-  out.push([0, 0.62, D / 2 - 0.22, W - 0.9, 0.07, 0.34, 0xd8b23a]);         // bench, yellow arms
+  // A sheltered stop has no pole: the flag, the carousel and the post are all
+  // replaced by a roundel on the shelter itself, which is what these actually
+  // carry once a shelter goes in.
+  // Local +Z is the street — that is what `face` means here — so the back wall
+  // goes at -Z and the shelter opens toward the road. It was built the other way
+  // round, which put the glass between you and the bus and sat you looking at
+  // the hedge.
+  const W = SHELTER_W, D = SHELTER_D, H = SHELTER_H;
+  const BACK = -D / 2;
+  out.push([0, H + 0.06, -0.05, W, 0.12, D + 0.30, SHELTER_ROOF]);         // roof
+  // the courtesy lighting on these is solar, so there is a panel on the roof
+  out.push([0.55, H + 0.15, -0.05, W * 0.42, 0.05, D * 0.5, 0x1b2733]);
+  out.push([0, H / 2, BACK, W, H, 0.06, 0x9fb6c4]);                         // back glazing
+  for (const sx of [-1, 1]) {
+    out.push([sx * (W / 2 - 0.05), H / 2, BACK + 0.03, 0.09, H, 0.09, SHELTER_FRAME]);
+  }
+  // Which end the side panel goes on follows from driving on the left. The stop
+  // sits on the near kerb of the direction it serves, so the near lane travels
+  // toward `face` minus 90 degrees — local +X. Traffic therefore comes out of
+  // local -X and leaves toward +X, and the panel belongs at the +X end, away
+  // from the traffic bearing down on it.
+  out.push([W / 2 - 0.04, H / 2, 0, 0.06, H, D, 0x9fb6c4]);                 // end panel
+  // the seat is against the back wall, so you sit looking out at the road
+  out.push([0, 0.62, BACK + 0.22, W - 0.9, 0.07, 0.34, 0xd8b23a]);
   return out;
 }
 
@@ -457,6 +495,8 @@ export function furnitureColliders(items, colliders) {
   // `soft` for the same reason trees are: being unable to walk through a bench
   // is right, having the camera shoved off it is not.
   for (const f of items) {
+    // a sign three metres up a wall is not something you walk into
+    if (f.kind === 'pharmacy') continue;
     if (f.kind === 'bench') {
       colliders.push({ x: f.x, z: f.z, hx: benchLength(f) / 2 + 0.05, hz: 0.34,
                        yaw: (f.face ?? 0) + Math.PI / 2, soft: true, h: 0.88 });
@@ -504,6 +544,7 @@ export function makeFurniture(items, M) {
   const racks = items.filter((f) => f.kind === 'bicycle_parking');
   const boxes_ = items.filter((f) => f.kind === 'post_box');
   const fittings = items.filter((f) => FITTING_KINDS.has(f.kind));
+  const signs = items.filter((f) => f.kind === 'pharmacy' && f.sign === 'cross');
   const out = [];
 
   if (benches.length) {
@@ -638,6 +679,32 @@ export function makeFurniture(items, M) {
     out.push(shell, band);
   }
 
+  if (signs.length) {
+    const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1),
+      M.furniture, signs.length * PHARMACY_CROSS.length);
+    mesh.castShadow = true;
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+    const pos = new THREE.Vector3(), scl = new THREE.Vector3();
+    const col = new THREE.Color();
+    let i = 0;
+    for (const f of signs) {
+      const theta = Math.PI / 2 - (f.face ?? 0);
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), theta);
+      const co = Math.cos(theta), si = Math.sin(theta);
+      for (const [lx, ly, lz, w, h, d, c] of PHARMACY_CROSS) {
+        pos.set(f.sx + lx * co + lz * si, ly, f.sz - lx * si + lz * co);
+        scl.set(w, h, d);
+        m.compose(pos, q, scl);
+        mesh.setMatrixAt(i, m);
+        mesh.setColorAt(i, col.setHex(c));
+        i++;
+      }
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    out.push(mesh);
+  }
+
   if (racks.length) {
     // A Sheffield stand is an arch: two straight legs and a half-round top. The
     // arch plane faces along the row, because bikes park in the gaps BETWEEN
@@ -738,15 +805,21 @@ export function makeFurniture(items, M) {
     // scaled per instance, so a 3m clock pole and a 0.55m charger stem come off
     // the same geometry.
     const specs = fittings.map(fittingSpec);
-    const nPosts = specs.filter((s) => s && s.post).length;
-    let nHeads = 0;
+    // a sheltered stop has no pole and no flag — the roundel on the shelter
+    // replaces both
+    const bare = (i) => specs[i] && specs[i].stop && !!fittings[i].shelter;
+    let nPosts = 0, nHeads = 0, nRound = 0;
     for (let i = 0; i < specs.length; i++) {
       const sp = specs[i];
       if (!sp) continue;
+      if (sp.post && !bare(i)) nPosts++;
       if (sp.kiosk) { nHeads += KIOSK.length; continue; }
       if (sp.bank) { nHeads += bankParts(bankStreams(fittings[i])).length; continue; }
-      nHeads += 1;
-      if (sp.stop) nHeads += busStopExtras(!!fittings[i].shelter).length;
+      if (!bare(i)) nHeads += 1;
+      if (sp.stop) {
+        nHeads += busStopExtras(!!fittings[i].shelter).length;
+        if (bare(i)) nRound++;
+      }
     }
 
     const postGeo = new THREE.CylinderGeometry(1, 1, 1, 8);
@@ -754,13 +827,20 @@ export function makeFurniture(items, M) {
     const posts = nPosts
       ? new THREE.InstancedMesh(postGeo, M.furniture, nPosts) : null;
     const heads = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), M.furniture, nHeads);
+    // The roundel is the one thing here that has to be round, so it cannot ride
+    // the box mesh. Ten stops in the whole map carry one.
+    const discGeo = new THREE.CylinderGeometry(0.27, 0.27, 0.05, 16);
+    discGeo.rotateZ(Math.PI / 2);                        // axis along local X
+    const rounds = nRound
+      ? new THREE.InstancedMesh(discGeo, M.furniture, nRound) : null;
     if (posts) posts.castShadow = true;
+    if (rounds) rounds.castShadow = true;
     heads.castShadow = heads.receiveShadow = true;
 
     const m = new THREE.Matrix4(), q = new THREE.Quaternion();
     const pos = new THREE.Vector3(), scl = new THREE.Vector3();
     const col = new THREE.Color();
-    let pi = 0, hi = 0;
+    let pi = 0, hi = 0, ri = 0;
 
     fittings.forEach((f, i) => {
       const spec = specs[i];
@@ -773,7 +853,7 @@ export function makeFurniture(items, M) {
       let bodyCol = spec.body;
       if (f.kind === 'recycling') bodyCol = RECYCLING_COLOUR[f.rec] ?? spec.body;
 
-      if (spec.post) {
+      if (spec.post && !bare(i)) {
         const [r, h] = spec.post;
         pos.set(f.x, f.y || 0, f.z);
         scl.set(r * 2, h, r * 2);
@@ -806,6 +886,19 @@ export function makeFurniture(items, M) {
           heads.setColorAt(hi, col.setHex(c));
           hi++;
         }
+        if (bare(i) && rounds) {
+          // The roundel goes at the top corner nearest the street, at the end
+          // furthest from the side panel — the panel is at +X, so this is -X.
+          // Its face lies along the road, which is how these are hung: you read
+          // it walking up the pavement, not standing in front of it.
+          const lx = -(SHELTER_W / 2 - 0.02), ly = SHELTER_H + 0.24, lz = SHELTER_D / 2 - 0.10;
+          pos.set(f.x + lx * co2 + lz * si2, y0 + ly, f.z - lx * si2 + lz * co2);
+          m.compose(pos, q, ONE);
+          rounds.setMatrixAt(ri, m);
+          rounds.setColorAt(ri, col.setHex(STOP_GREEN));
+          ri++;
+        }
+        if (bare(i)) return;          // no flag: the roundel is the sign now
       }
       if (spec.kiosk) {
         const co = Math.cos(theta), si = Math.sin(theta);
@@ -836,6 +929,11 @@ export function makeFurniture(items, M) {
       posts.instanceMatrix.needsUpdate = true;
       if (posts.instanceColor) posts.instanceColor.needsUpdate = true;
       out.push(posts);
+    }
+    if (rounds) {
+      rounds.instanceMatrix.needsUpdate = true;
+      if (rounds.instanceColor) rounds.instanceColor.needsUpdate = true;
+      out.push(rounds);
     }
     heads.instanceMatrix.needsUpdate = true;
     if (heads.instanceColor) heads.instanceColor.needsUpdate = true;

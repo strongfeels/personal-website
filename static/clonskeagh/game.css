@@ -54,6 +54,64 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14;
 .bar i { display: block; height: 100%; width: 40%; border-radius: 3px; background: #ffd166;
   animation: slide 1.25s ease-in-out infinite; }
 @keyframes slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(340%); } }
+
+/* ---- the couplet, over the running world ----
+   The loading screen leaves the moment the world is ready, so this sits over a
+   scene you can already walk around in. It never takes input and nothing
+   dismisses it — it runs its course.
+
+   Each line rises and settles into place, a beat apart.
+
+   Legibility is the constraint: pale text on a bright sky disappears, so a soft
+   dark pool sits behind it and the shadow does more work than the glow. */
+#dream { position: fixed; inset: 0; z-index: 8; margin: 0;
+  display: grid; place-content: center; pointer-events: none; opacity: 0;
+  padding-bottom: 26vh;                 /* lifts the text above mid-screen */
+  transition: opacity 2.2s ease;
+  background: radial-gradient(ellipse 44% 22% at 50% 37%,
+    rgba(5,9,15,.56), rgba(5,9,15,.32) 46%, rgba(5,9,15,0) 73%);
+  /* Hoefler Text and Baskerville are the literary ones and both ship on Apple
+     devices; Android falls through to Noto Serif, Windows to Georgia. Every
+     name in the chain has a real italic rather than a slanted roman. */
+  font-family: 'Hoefler Text', Baskerville, 'Palatino Linotype', Palatino,
+               'Noto Serif', Georgia, serif;
+  font-style: italic; line-height: 2.0; text-align: center;
+  font-size: 22px; letter-spacing: .012em;
+  /* not solid — the world shows faintly through the letters, which is the point
+     of putting it over a live scene. The shadow keeps it readable anyway. */
+  color: rgba(240, 245, 252, .80);
+  text-shadow: 0 1px 12px rgba(0,0,0,.75), 0 0 26px rgba(150,190,235,.32); }
+#dream span { display: block; opacity: 0;
+  transform: translateY(16px) scale(1.014);
+  /* tell the compositor up front, so the first frame of the reveal is not also
+     the frame that promotes the layer */
+  will-change: opacity, transform; }
+#dream.show { opacity: 1; }
+#dream.show.done { opacity: 0; }        /* after .show, so this wins */
+
+/* Only opacity and transform are animated, and deliberately so. The previous
+   version swept a soft mask across each line, which looks better but cannot be
+   composited: mask-position forces a repaint of the text every frame. That is
+   fine on an idle page and not fine here — the world streams chunks for up to
+   5ms of every frame right after it appears, which is exactly when this runs,
+   so the reveal stuttered against it. Opacity and transform are handled off the
+   main thread and are immune to whatever the world is doing. */
+#dream.show span { animation: arrive 2.6s cubic-bezier(.22,.68,.24,1) .35s forwards; }
+#dream.show span:nth-child(2) { animation-delay: 1.2s; }
+@keyframes arrive {
+  0%   { opacity: 0; transform: translateY(16px) scale(1.014); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 560px) {
+  #dream { font-size: 17px; line-height: 1.95; padding-bottom: 30vh;
+    background: radial-gradient(ellipse 68% 17% at 50% 35%,
+      rgba(5,9,15,.58), rgba(5,9,15,.34) 46%, rgba(5,9,15,0) 75%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #dream.show span { animation: none; opacity: 1; transform: none; }
+}
+
 #credit { position: fixed; bottom: 16px; right: 220px; font-size: 10.5px; color: #6b7683; }
 
 /* ---- touch controls: only created on a coarse-pointer device ---- */

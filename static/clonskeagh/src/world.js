@@ -781,7 +781,7 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     // ---- landmarks get arcaded elevations, not a semi-d's door and bay
     if (b.lm === 'hospital') {
       victorianWalls(mb, poly, b);
-    } else if ((b.lm === 'commercial' || TRADE.has(b.amenity)) && b.h >= 4
+    } else if ((b.lm === 'commercial' || b.shop || TRADE.has(b.amenity)) && b.h >= 4
                && !PERIOD.has(b.lm)) {
       commercialWalls(mb, poly, b, wallKey, tint);
     } else if (!isOut && !PERIOD.has(b.lm)
@@ -1193,7 +1193,8 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
   // stream as everything else rather than being one mesh over the whole map.
   const FURNITURE = new Set(['bench', 'waste_basket', 'bicycle_parking', 'post_box',
                             'vending_machine', 'recycling', 'charging_station',
-                            'clock', 'telephone', 'drinking_water', 'bus_stop']);
+                            'clock', 'telephone', 'drinking_water', 'bus_stop',
+                            'pharmacy']);
   // `indoor` bins are inside a building the game has no interior for, so drawing
   // them puts a bin in the middle of the street.
   const street = (world.pois || []).filter((p) => FURNITURE.has(p.kind) && !p.indoor);

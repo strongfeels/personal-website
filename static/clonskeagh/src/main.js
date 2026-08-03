@@ -127,6 +127,24 @@ const clock = new THREE.Clock();
  * atan2(-cos face, -sin face). Module scope because the R key needs it too, and
  * it falls back to Gledswood Avenue so an older world.json still loads.
  */
+/**
+ * Poe over the running world, for a few seconds.
+ *
+ * Not a gate: the loading screen has already gone and the game is live and
+ * playable underneath, so this blocks nothing.
+ *
+ * Nothing dismisses it. It used to go on any key or tap, which was wrong the
+ * moment the world became playable underneath it — you reach for the controls
+ * straight away, and the poem vanished before it had finished arriving. It runs
+ * its course. ?nodream=1 skips it outright for anyone reloading all day.
+ */
+function showCouplet(skip) {
+  const el = document.getElementById('dream');
+  if (!el || skip) return;
+  el.classList.add('show');
+  setTimeout(() => el.classList.add('done'), 4600);
+}
+
 function placeAtStart() {
   const sp = worldData && worldData.spawn;
   if (sp) {
@@ -266,14 +284,17 @@ async function boot() {
   applySky(q.get('sky') || 'day');
   drawMinimap();
 
-  hud.loading.classList.add('gone');
-
-  // draw one frame synchronously so there's always something on screen even if
-  // rAF is throttled, then start the loop
+  // Draw one frame synchronously so there's always something on screen even if
+  // rAF is throttled, then start the loop.
   if (drive) driveCamera(0.016); else controller.update(0.016);
   updateSun();
   renderer.render(scene, camera);
   animate();
+
+  // The loading screen goes now — the world is up and playable from here. The
+  // couplet lies over the top of it and blocks nothing.
+  hud.loading.classList.add('gone');
+  showCouplet(q.has('nodream'));
 }
 
 // Yield so the loading text repaints. rAF alone would hang in a background tab,

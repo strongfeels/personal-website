@@ -471,8 +471,16 @@ const BUS_NEAR = 180;
 // opposite lane read as an obstruction and the two of them stopped for each
 // other with a full lane of clear air between. Along-track and cross-track
 // instead, so it blocks only for something genuinely ahead AND in this lane.
-const LOOK = 9.5;              // metres ahead for another car
-const LOOK_PLAYER = 11.0;      // ...and for you, who are less predictable
+// Following was all-or-nothing: full speed until something came within reach,
+// then brake. That is what tailgating is — closing to the limit and stopping
+// dead. The gap is measured now and speed scales with it, so a car eases off
+// early and settles at a distance instead of arriving at your bumper.
+const LOOK = 18.0;             // start easing off this far behind another car
+const LOOK_PLAYER = 22.0;      // ...and further behind you, who are less predictable
+// Centre to centre, and a car is 4.24m long, so 9m leaves about 4.7m of clear
+// air between bumpers. At 6 it was under two metres, which still reads as
+// sitting on somebody's boot.
+const KEEP = 9.0;
 const LANE_HALF = 1.7;         // lateral tolerance; lanes here sit ~3m apart
 const LANE_HALF_PLAYER = 2.0;
 // Traffic coming the other way is not an obstruction, it is traffic: it will
@@ -571,27 +579,34 @@ export class Traffic {
 
       // look ahead for anything in our way and lift off if there is
       const [px, pz] = driveAt(lane, c.t);
-      let blocked = false;
+      let gap = 1e9, reach = LOOK;
       const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw);
-      const inWay = (dx, dz, reach, halfWidth) => {
+      // how far ahead, in this lane — 1e9 when it is not in the way at all
+      const aheadBy = (dx, dz, limit, halfWidth) => {
         const along = dx * fx + dz * fz;
-        if (along <= 0.1 || along > reach) return false;
-        return Math.abs(dx * fz - dz * fx) < halfWidth;
+        if (along <= 0.1 || along > limit) return 1e9;
+        return Math.abs(dx * fz - dz * fx) < halfWidth ? along : 1e9;
       };
       for (const o of obstacles) {
-        if (inWay(o.x - px, o.z - pz, LOOK_PLAYER, LANE_HALF_PLAYER)) { blocked = true; break; }
+        const g = aheadBy(o.x - px, o.z - pz, LOOK_PLAYER, LANE_HALF_PLAYER);
+        if (g < gap) { gap = g; reach = LOOK_PLAYER; }
       }
       for (const other of this.cars) {
-        if (other === c || blocked) continue;
+        if (other === c) continue;
         const [ox, oz] = driveAt(this.lanes[other.lane], other.t);
         // same way as us, or head-on?
         const facing = Math.sin(other.yaw) * fx + Math.cos(other.yaw) * fz;
         const halfWidth = facing < 0 ? LANE_HALF_ONCOMING : LANE_HALF;
-        if (inWay(ox - px, oz - pz, LOOK, halfWidth)) { blocked = true; break; }
+        const g = aheadBy(ox - px, oz - pz, LOOK, halfWidth);
+        if (g < gap) { gap = g; reach = LOOK; }
       }
 
-      const want = blocked ? 0 : c.target;
-      c.speed += (want - c.speed) * Math.min(1, dt * (blocked ? 3.2 : 1.3));
+      // gap -> target: full speed at the look-ahead, stopped at KEEP
+      const ease = gap >= 1e8 ? 1
+        : Math.max(0, Math.min(1, (gap - KEEP) / (reach - KEEP)));
+      const want = c.target * ease;
+      const closing = want < c.speed;
+      c.speed += (want - c.speed) * Math.min(1, dt * (closing ? 3.2 : 1.3));
       c.t += c.speed * dt;
 
       // a car going nowhere for a minute has jammed against something; once it's
