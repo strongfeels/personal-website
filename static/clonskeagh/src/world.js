@@ -410,9 +410,21 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
       area += a[0] * c[1] - c[0] * a[1];
     }
     area = Math.abs(area) / 2;
-    // the recorded height is the bake's default, not a survey: a forecourt has
-    // to clear a lorry, a walkway only has to clear people
-    const H = area > 400 ? 4.5 : 3.1 + hash01(b.id, 31) * 0.5;
+    // The recorded height is the bake's default, not a survey. Floor area was
+    // the proxy for how much headroom a canopy needs, and it is the wrong one:
+    // every filling station in the square is between 219 and 286 m2, so all
+    // four were given a walkway's 3.1-3.6m. The bake now says outright which
+    // roofs are forecourts.
+    //
+    // 4.5 rather than the 4.9 tried first. Nothing here is a truck stop — these
+    // are four-pump suburban forecourts, none of them tagged hgv, and the
+    // delivery tanker fills from points at the edge of the site rather than
+    // driving under the roof. It is raised because 3.1m is not what a forecourt
+    // looks like — vans and roof boxes go under it and the deck carries the
+    // lighting — not because a lorry has to fit. No canopy here carries a
+    // height tag; the one surveyed maxheight on any roof in the square is 4.8,
+    // and that is a different building.
+    const H = b.fuel || area > 400 ? 4.5 : 3.1 + hash01(b.id, 31) * 0.5;
     const deck = 0.26;
 
     mb.roof.polyFlat(poly, H + deck, 3, 0xdadada);
@@ -434,6 +446,90 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
         const px2 = x1 + ux2 * t + inx * 0.34;
         const pz2 = z1 + uz2 * t + inz * 0.34;
         mb.dark.box(px2, 0, pz2, 0.1, H, 0.1, 0, 1, 0x4a4d50);
+      }
+    }
+
+    if (b.fuel) emitPumps(mb, b, poly);
+  }
+
+  /**
+   * Pump islands under a forecourt canopy.
+   *
+   * An Irish forecourt is two raised kerb islands running the length of the
+   * canopy with a lane between them, and a dispenser standing on each island
+   * serving a car on either side — so a four-pump station has two islands and
+   * two dispensers, not four. The dispenser itself is a plain cabinet about
+   * 1.3m to the top of the housing with a darker hood over the display and a
+   * band of the brand's colour under it: Circle K red, Applegreen green. Both
+   * brands are in the square, and the three Circle Ks are the Topaz sites
+   * rebranded in 2018.
+   *
+   * The layout is derived, not surveyed. OSM gives the canopy outline and the
+   * brand; it does not say where the islands are or how many pumps there are,
+   * so this is a plausible forecourt scaled to the real canopy rather than a
+   * portrait of any one station.
+   */
+  function emitPumps(mb, b, poly) {
+    // the longest edge sets the axis — a forecourt canopy is a rectangle and
+    // the islands run along it
+    let ux = 1, uz = 0, longest = 0;
+    for (let i = 0; i < poly.length; i++) {
+      const p0 = poly[i], p1 = poly[(i + 1) % poly.length];
+      const ex = p1[0] - p0[0], ez = p1[1] - p0[1];
+      const len = Math.hypot(ex, ez);
+      if (len > longest) { longest = len; ux = ex / len; uz = ez / len; }
+    }
+    let vx = -uz, vz = ux;
+    let [ulo, uhi] = projectExtent(poly, ux, uz);
+    let [vlo, vhi] = projectExtent(poly, vx, vz);
+    // The longest edge is the long axis of a rectangle but not of anything
+    // else, and Nutgrove's canopy is not a rectangle — its longest edge is
+    // 14m across a footprint that is 21m the other way, which would have laid
+    // the islands across the short dimension. Go by the extents instead.
+    if (vhi - vlo > uhi - ulo) {
+      // the new across-axis is the old along-axis reversed, not another copy of
+      // the new along-axis — get this wrong and u and v are the same vector,
+      // the basis collapses and the islands land a kilometre off the map
+      [ux, uz, vx, vz] = [vx, vz, -ux, -uz];
+      [ulo, uhi, vlo, vhi] = [vlo, vhi, -uhi, -ulo];
+    }
+    const cx = ux * ((ulo + uhi) / 2) + vx * ((vlo + vhi) / 2);
+    const cz = uz * ((ulo + uhi) / 2) + vz * ((vlo + vhi) / 2);
+    const L = uhi - ulo, W = vhi - vlo;
+    const yaw = Math.atan2(uz, ux);
+    const at = (du, dv) => [cx + ux * du + vx * dv, cz + uz * du + vz * dv];
+
+    // A forecourt is tarmac, and these canopies were standing on grass. The
+    // apron is kept tight to the canopy — two metres of margin — so it cannot
+    // spill over the footpath or the carriageway. 0.062 clears the grass fills
+    // at 0.02-0.04, the water at 0.055 and the parking at 0.06, and stays under
+    // the road markings at 0.065.
+    const mgn = 2.0;
+    mb.road.polyFlat([
+      at(-L / 2 - mgn, -W / 2 - mgn), at(L / 2 + mgn, -W / 2 - mgn),
+      at(L / 2 + mgn, W / 2 + mgn), at(-L / 2 - mgn, W / 2 + mgn),
+    ], 0.062, 6, 0x8f9194);
+
+    const islandLen = Math.min(L - 2.6, 11);
+    if (islandLen < 3.2 || W < 4.5) return;     // too tight to stand anything in
+
+    const brand = /applegreen/i.test(b.fuel) ? 0x4c9f38 : 0xd8232a;
+    // Islands sit about 6.8m apart: a car's length plus room to open a door.
+    // A canopy wide enough for a third rank gets one rather than leaving seven
+    // metres of empty deck along each side.
+    const lane = Math.min(W * 0.22, 3.4);
+    const rows = W >= 17 ? [-2 * lane, 0, 2 * lane] : [-lane, lane];
+
+    for (const dv of rows) {
+      const [ix, iz] = at(0, dv);
+      mb.pavement.box(ix, 0, iz, islandLen, 0.16, 1.15, yaw, 1, 0xb9bcbe);
+      const pumps = islandLen > 8 ? 2 : 1;
+      for (let k = 0; k < pumps; k++) {
+        const du = pumps === 1 ? 0 : (k - 0.5) * islandLen * 0.52;
+        const [px, pz] = at(du, dv);
+        mb.trim.box(px, 0.16, pz, 1.15, 1.14, 0.62, yaw, 1, 0xeceeef);  // cabinet
+        mb.trim.box(px, 1.30, pz, 1.17, 0.16, 0.64, yaw, 1, brand);     // brand band
+        mb.dark.box(px, 1.46, pz, 1.22, 0.46, 0.68, yaw, 1, 0x33363a);  // display hood
       }
     }
   }
