@@ -177,6 +177,19 @@ async function boot() {
     .then((r) => (r.ok ? r.json() : { trees: [] }))
     .catch(() => ({ trees: [] }));
   veg.trees = (veg.trees || []).concat(osmTrees.trees || []);
+  // Woodland the crown detector cannot see: it looks for separated blobs and a
+  // closed canopy has none, so the places with the most trees had the fewest.
+  // These are planted per 6m cell where the imagery reads green AND dark.
+  const canopy = await fetch('./canopy_trees.json')
+    .then((r) => (r.ok ? r.json() : { trees: [] }))
+    .catch(() => ({ trees: [] }));
+  // They more than double the tree count, which is 337k instances rather than
+  // 157k. A phone takes every other one — the generator emits them in cell
+  // order, so that thins evenly across the map rather than clearing a side of it.
+  const planted = MOBILE
+    ? (canopy.trees || []).filter((_, i) => i % 2 === 0)
+    : (canopy.trees || []);
+  veg.trees = veg.trees.concat(planted);
 
   hud.loadingText.textContent = 'Mixing mortar…';
   await frame();
