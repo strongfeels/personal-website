@@ -183,57 +183,123 @@ export const BUS = { len: 10.9, wid: 2.52, high: 4.35, wheelR: 0.47 };
 // Current TFI livery is yellow with acid green and black; it replaced the
 // yellow-and-blue that ran for over a decade, and the repaint is gradual, so a
 // few of the old ones are still about.
-const BUS_LIVERY = [
-  { body: 0xf2c317, skirt: 0x7ab800 },
-  { body: 0xf2c317, skirt: 0x7ab800 },
-  { body: 0xf2c317, skirt: 0x7ab800 },
-  { body: 0xf5c518, skirt: 0x11317a },   // the old blue
-];
 const BUS_BLACK = new THREE.MeshStandardMaterial({ color: 0x17181a, roughness: 0.72 });
 const BUS_ROOF = new THREE.MeshStandardMaterial({ color: 0xb9bcbe, roughness: 0.85 });
+
+/** Concatenate boxes into one geometry, so a detailed bus is still a few draws. */
+function mergeBoxes(parts) {
+  const geos = parts.map(([w, h, d, x, y, z]) => {
+    const g = new THREE.BoxGeometry(w, h, d);
+    g.translate(x, y, z);
+    return g.index ? g.toNonIndexed() : g;
+  });
+  let n = 0;
+  for (const g of geos) n += g.attributes.position.count;
+  const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), uv = new Float32Array(n * 2);
+  let o3 = 0, o2 = 0;
+  for (const g of geos) {
+    pos.set(g.attributes.position.array, o3);
+    nrm.set(g.attributes.normal.array, o3);
+    uv.set(g.attributes.uv.array, o2);
+    o3 += g.attributes.position.count * 3;
+    o2 += g.attributes.position.count * 2;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  out.computeBoundingSphere();
+  return out;
+}
 
 /**
  * A Dublin double-decker: 10.9m long, 2.52m wide, 4.35m to the roof.
  *
- * Built as slabs rather than a moulded shell — at any distance you actually see
- * one, the silhouette and the livery bands are what read, and a box with the
- * right proportions and the right stripe is a bus. Returned in makeCar's shape
- * so the traffic loop can drive it without knowing which it has.
+ * The livery is the current TFI one: the front is FULLY yellow — that is an
+ * accessibility requirement, not a style choice — and the green climbs from the
+ * skirt up the flanks as it runs back, reaching full height across the rear. The
+ * curve is cut into 18 vertical slices per side; at any distance you see a bus
+ * from, stepped slices read as a sweep.
+ *
+ * Windows are individual panes with body-colour pillars between them, and there
+ * are windows on the back of both decks. A single black rectangle per side was
+ * the giveaway that this was a box rather than a bus.
+ *
+ * Everything is merged per material, so all that detail is about ten draws.
  */
 export function makeBus(seed = 0) {
   const g = new THREE.Group();
   const L = BUS.len, W = BUS.wid, H = BUS.high;
-  const liv = BUS_LIVERY[Math.floor(hash01(seed, 11) * BUS_LIVERY.length) % BUS_LIVERY.length];
-  const paint = new THREE.MeshStandardMaterial({ color: liv.body, roughness: 0.42, metalness: 0.15 });
-  const skirt = new THREE.MeshStandardMaterial({ color: liv.skirt, roughness: 0.45, metalness: 0.1 });
+  const FLOOR = 0.62;                       // underside of the body
+  const old = hash01(seed, 11) > 0.75;      // some are still in the old blue
+  const paint = new THREE.MeshStandardMaterial({
+    color: old ? 0xf5c518 : 0xf2c317, roughness: 0.42, metalness: 0.15 });
+  const accent = new THREE.MeshStandardMaterial({
+    color: old ? 0x11317a : 0x3f8a2b, roughness: 0.45, metalness: 0.12 });
 
-  const add = (w, h, d, x, y, z, mat) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-    m.position.set(x, y, z);
+  const body = [], acc = [], glass = [], black = [];
+
+  body.push([W, H - FLOOR, L, 0, FLOOR + (H - FLOOR) / 2, 0]);
+
+  // The wave. Green height rises from nothing under the front to the full flank
+  // by roughly a third back, then stays up and wraps the rear.
+  const SLICES = 18;
+  const ease = (t) => t * t * (3 - 2 * t);
+  for (let i = 0; i < SLICES; i++) {
+    const z0 = L / 2 - (i / SLICES) * L;
+    const dz = L / SLICES;
+    const zc = z0 - dz / 2;
+    const t = ease(Math.min(1, Math.max(0, (L / 2 - 0.9 - zc) / (L * 0.42))));
+    const hh = t * (H - FLOOR - 0.10);
+    if (hh < 0.05) continue;
+    acc.push([W + 0.012, hh, dz + 0.004, 0, FLOOR + hh / 2, zc]);
+  }
+  acc.push([W + 0.014, H - FLOOR - 0.10, 0.05, 0, FLOOR + (H - FLOOR - 0.10) / 2, -L / 2 - 0.005]);
+  acc.push([W + 0.02, 0.40, L, 0, FLOOR + 0.20, 0]);          // skirt band, full length
+
+
+  // ---- glazing. Panes with pillars between them, not one long rectangle.
+  const pane = (y, h, zFrom, zTo, n) => {
+    const span = zTo - zFrom;
+    const gap = 0.13;
+    const wpane = (span - gap * (n - 1)) / n;
+    for (let i = 0; i < n; i++) {
+      const zc = zFrom + wpane / 2 + i * (wpane + gap);
+      glass.push([W + 0.03, h, wpane, 0, y, zc]);
+    }
+  };
+  pane(1.72, 0.76, -L / 2 + 0.75, L / 2 - 1.75, 6);            // lower deck
+  pane(3.28, 0.90, -L / 2 + 0.55, L / 2 - 0.95, 7);            // upper deck
+  // windscreens, and the rear windows that were missing entirely
+  glass.push([W - 0.18, 0.86, 0.08, 0, 1.76, L / 2 + 0.015]);
+  glass.push([W - 0.18, 1.02, 0.08, 0, 3.24, L / 2 + 0.015]);
+  glass.push([W - 0.30, 0.74, 0.08, 0, 1.74, -L / 2 - 0.03]);
+  glass.push([W - 0.26, 0.94, 0.08, 0, 3.26, -L / 2 - 0.03]);
+
+  black.push([W - 0.34, 0.30, 0.06, 0, 3.92, L / 2 + 0.03]);   // destination blind
+  black.push([W + 0.035, 0.12, L - 1.3, 0, 2.34, -0.1]);       // deck line
+
+  const roof = new THREE.Mesh(mergeBoxes([[W - 0.16, 0.16, L - 0.5, 0, H - 0.06, 0]]), BUS_ROOF);
+  roof.castShadow = true;
+  g.add(roof);
+
+  const paintMesh = new THREE.Mesh(mergeBoxes(body), paint);
+  const accMesh = new THREE.Mesh(mergeBoxes(acc), accent);
+  const glassMesh = new THREE.Mesh(mergeBoxes(glass), CAR_GLASS);
+  const blackMesh = new THREE.Mesh(mergeBoxes(black), BUS_BLACK);
+  for (const m of [paintMesh, accMesh, glassMesh, blackMesh]) {
     m.castShadow = m.receiveShadow = true;
     g.add(m);
-    return m;
-  };
-
-  add(W, H - 0.62, L, 0, 0.62 + (H - 0.62) / 2, 0, paint);          // body
-  add(W + 0.015, 0.42, L, 0, 0.83, 0, skirt);                        // skirt band
-  add(W - 0.16, 0.16, L - 0.5, 0, H - 0.06, 0, BUS_ROOF);            // roof
-
-  // glazing: a band per deck, plus a windscreen on each at the front
-  add(W + 0.02, 0.78, L - 1.35, 0, 1.72, -0.1, CAR_GLASS);
-  add(W + 0.02, 0.92, L - 1.15, 0, 3.28, -0.05, CAR_GLASS);
-  add(W - 0.18, 0.86, 0.08, 0, 1.76, L / 2 + 0.01, CAR_GLASS);
-  add(W - 0.18, 1.02, 0.08, 0, 3.24, L / 2 + 0.01, CAR_GLASS);
-  add(W - 0.34, 0.30, 0.06, 0, 3.92, L / 2 + 0.02, BUS_BLACK);       // destination blind
-  add(W + 0.02, 0.14, L - 1.35, 0, 2.36, -0.1, BUS_BLACK);           // deck line
-
-  for (const s of [-1, 1]) {
-    const f = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.16, 0.08), CAR_LAMP_F);
-    f.position.set(s * (W / 2 - 0.32), 0.72, L / 2 + 0.01);
-    const r = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.16, 0.08), CAR_LAMP_R);
-    r.position.set(s * (W / 2 - 0.3), 0.78, -L / 2 - 0.01);
-    g.add(f, r);
   }
+
+  const lampF = [], lampR = [];
+  for (const s of [-1, 1]) {
+    lampF.push([0.3, 0.16, 0.08, s * (W / 2 - 0.32), 0.72, L / 2 + 0.02]);
+    lampR.push([0.28, 0.16, 0.08, s * (W / 2 - 0.3), 0.78, -L / 2 - 0.02]);
+  }
+  const fm = new THREE.Mesh(mergeBoxes(lampF), CAR_LAMP_F);
+  const rm = new THREE.Mesh(mergeBoxes(lampR), CAR_LAMP_R);
+  g.add(fm, rm);
 
   // one axle at the front, a doubled one at the back
   const wheels = [];

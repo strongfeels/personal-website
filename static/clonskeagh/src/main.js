@@ -119,6 +119,29 @@ let touch = null;
 let labels = [];
 const clock = new THREE.Clock();
 
+/**
+ * Put the player where the game starts: the bench on Gledswood Drive, standing
+ * a step in front of it looking the way it looks.
+ *
+ * Camera forward is (-sin yaw, -cos yaw), so the yaw that looks along `face` is
+ * atan2(-cos face, -sin face). Module scope because the R key needs it too, and
+ * it falls back to Gledswood Avenue so an older world.json still loads.
+ */
+function placeAtStart() {
+  const sp = worldData && worldData.spawn;
+  if (sp) {
+    controller.pos.set(sp.x, 0, sp.z);
+    controller.camYaw = Math.atan2(-Math.cos(sp.face), -Math.sin(sp.face));
+    return;
+  }
+  const ave = worldData.gledswoodAvenue.flat();
+  if (ave.length >= 2) {
+    const mid = ave[Math.floor(ave.length / 2)];
+    controller.pos.set(mid[0], 0, mid[1] + 2.2);
+    controller.camYaw = Math.PI / 2;
+  }
+}
+
 function toggleSound() {
   sound.start();                       // a tap counts as the gesture browsers want
   const on = sound.toggle();
@@ -197,13 +220,7 @@ async function boot() {
   }
   worldColliders = built.colliders;
 
-  // spawn on Gledswood Avenue, facing up the street
-  const ave = worldData.gledswoodAvenue.flat();
-  if (ave.length >= 2) {
-    const mid = ave[Math.floor(ave.length / 2)];
-    controller.pos.set(mid[0], 0, mid[1] + 2.2);
-    controller.camYaw = Math.PI / 2;
-  }
+  placeAtStart();
 
   // ?x=&z=&yaw=&pitch=&dist=&sky= — handy for grabbing a specific view
   const q = new URLSearchParams(location.search);
@@ -515,11 +532,7 @@ addEventListener('keydown', (e) => {
   }
   if (e.code === 'KeyM') hud.minimap.classList.toggle('big');
   if (e.code === 'KeyC') document.getElementById('help').classList.toggle('gone');
-  if (e.code === 'KeyR') {
-    const ave = worldData.gledswoodAvenue.flat();
-    const mid = ave[Math.floor(ave.length / 2)];
-    controller.pos.set(mid[0], 0, mid[1] + 2.2);
-  }
+  if (e.code === 'KeyR') placeAtStart();
 });
 
 addEventListener('resize', () => {
