@@ -451,8 +451,13 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
    * not — it is a plausible commercial front, not a portrait of any one shop.
    */
   function commercialWalls(mb, poly, b, wallKey, tint) {
-    const SHOP = Math.min(3.4, b.h * 0.52);        // top of the shopfront
-    const FASCIA = 0.85;                           // the sign band above it
+    // A chemist does not look like the shop beside it: white, and glazed
+    // nearly to the pavement with far fewer mullions, so the front reads as
+    // one big window rather than a row of panes.
+    const chem = !!b.pharmacy;
+    const SHOP = chem ? Math.min(4.0, b.h * 0.62)  // a taller shopfront
+                      : Math.min(3.4, b.h * 0.52);
+    const FASCIA = chem ? 1.0 : 0.85;              // the sign band above it
     const glassCol = 0xffffff;
 
     for (let i = 0; i < poly.length; i++) {
@@ -473,19 +478,23 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
       };
 
       // ground floor: one run of glazing, held off the ends by a pier
-      const pier = 0.7;
+      const pier = chem ? 0.42 : 0.7;              // slimmer piers, wider window
       const glazed = len - pier * 2;
+      const sill = chem ? 0.22 : 0.45;             // glazed nearly to the ground
       if (glazed > 1.5) {
-        face(0, 0.45, glazed, SHOP - 0.7, 'glass', glassCol, 0.06);
-        face(0, 0.0, glazed, 0.45, 'dark', 0x3d4045, 0.07);            // stall riser
-        // mullions every 2m or so
-        const bays = Math.max(1, Math.round(glazed / 2.1));
+        face(0, sill, glazed, SHOP - sill - 0.25, 'glass', glassCol, 0.06);
+        face(0, 0.0, glazed, sill, 'dark', chem ? 0xd8d5cd : 0x3d4045, 0.07);  // stall riser
+        // every 2m on a normal shop, every 3.4m on a chemist
+        const bays = Math.max(1, Math.round(glazed / (chem ? 3.4 : 2.1)));
         for (let k = 1; k < bays; k++) {
-          face(-glazed / 2 + (glazed * k) / bays, 0.45, 0.1, SHOP - 0.7, 'trim', 0xe8e6e0, 0.1);
+          face(-glazed / 2 + (glazed * k) / bays, sill, 0.1, SHOP - sill - 0.25,
+               'trim', chem ? 0xf6f4f0 : 0xe8e6e0, 0.1);
         }
-        // fascia band, where the sign goes
-        face(0, SHOP, len - 0.2, FASCIA, 'dark', 0x2f3338, 0.09);
-        face(0, SHOP + FASCIA - 0.06, len - 0.2, 0.06, 'trim', 0xd9d5cc, 0.11);
+        // fascia: white on a chemist, with a green line under it
+        face(0, SHOP, len - 0.2, FASCIA, chem ? 'trim' : 'dark',
+             chem ? 0xf4f2ee : 0x2f3338, 0.09);
+        face(0, SHOP + FASCIA - 0.06, len - 0.2, 0.06, 'trim',
+             chem ? 0x2f7d4a : 0xd9d5cc, 0.11);
       }
 
       // upper floors: a regular grid, as offices over a shop
@@ -575,6 +584,107 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
 
     extrudeWalls(mb[wallKey], poly, b.h, b.h + 0.6, tint);            // parapet
     mb.granite.polyFlat(poly, b.h + 0.63, 3, 0xffffff);
+  }
+
+  /**
+   * An Irish school.
+   *
+   * All 90 were going through arcadeWalls, the same function as the 26 churches
+   * and differing only in window height — so a national school was a church with
+   * shorter openings: sandstone, round heads, granite quoins.
+   *
+   * What the data says they are: 83 of 90 are two storeys, 82 are flat-roofed,
+   * median height 7.2m, median longest wall 26m. That is the post-war Irish
+   * school exactly, and it is a horizontal building. Everything below is in
+   * service of reading horizontal:
+   *
+   *   - continuous bands of wide windows, one per storey, aligned floor to floor
+   *   - a spandrel band running the full wall between them, which is the single
+   *     move that stops it reading as a house or a church
+   *   - one announced entrance, because a school has exactly one front door
+   *
+   * Deliberately absent: arched heads, quoins, anything ecclesiastical.
+   */
+  function schoolWalls(mb, poly, b, wallKey, tint) {
+    const FLOOR = 3.0;
+    const floors = Math.max(1, Math.min(4, Math.round((b.h - 1.0) / FLOOR)));
+    const glassCol = 0xffffff;
+    const small = b.area < 200 || floors < 2;      // a prefab classroom block
+    const band = 0x9aa3a8;                          // spandrel, cooler than the wall
+
+    // the entrance goes on the wall the building faces, and only there
+    let bestWall = -1, bestScore = -Infinity;
+    if (!small) {
+      const wx = Math.cos(b.facing), wz = Math.sin(b.facing);
+      let cx = 0, cz = 0;
+      for (const q of poly) { cx += q[0] / poly.length; cz += q[1] / poly.length; }
+      for (let i = 0; i < poly.length; i++) {
+        const [x1, z1] = poly[i], [x2, z2] = poly[(i + 1) % poly.length];
+        const len = Math.hypot(x2 - x1, z2 - z1);
+        if (len < 9) continue;
+        let nx = (z2 - z1) / len, nz = -(x2 - x1) / len;
+        const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
+        if ((mx - cx) * nx + (mz - cz) * nz < 0) { nx = -nx; nz = -nz; }
+        const score = (nx * wx + nz * wz) * Math.min(len, 30);
+        if (score > bestScore) { bestScore = score; bestWall = i; }
+      }
+    }
+
+    for (let i = 0; i < poly.length; i++) {
+      const [x1, z1] = poly[i];
+      const [x2, z2] = poly[(i + 1) % poly.length];
+      const ex = x2 - x1, ez = z2 - z1;
+      const len = Math.hypot(ex, ez);
+      if (len < 3.2) continue;
+      const tx = ex / len, tz = ez / len;
+      const nx = ez / len, nz = -ex / len;         // outward
+      const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
+      const face = (off, y, w, h, key, colour, proud) => {
+        const ax = mx + tx * (off - w / 2) + nx * proud, az = mz + tz * (off - w / 2) + nz * proud;
+        const bx = mx + tx * (off + w / 2) + nx * proud, bz = mz + tz * (off + w / 2) + nz * proud;
+        mb[key].quad([bx, y, bz], [ax, y, az], [ax, y + h, az], [bx, y + h, bz],
+                     [[0, 0], [1, 0], [1, 1], [0, 1]], colour);
+      };
+
+      // Bays are set once for the whole wall and reused on every floor, so the
+      // windows line up vertically. A school grid is strict; a house's is not.
+      const inset = 1.1;
+      const run = len - inset * 2;
+      if (run < 2.0) continue;
+      const bays = Math.max(1, Math.round(run / 3.1));
+      const pitch = run / bays;
+      const winW = Math.min(2.2, pitch - 0.85);
+
+      for (let f = 0; f < floors; f++) {
+        const sill = 1.0 + f * FLOOR;
+        if (sill + 1.5 > b.h) break;
+        // the spandrel: a band the full width of the wall, under every floor
+        // above the first. This is the horizontal line that makes it a school.
+        if (f > 0) face(0, sill - 1.05, len - 0.12, 0.85, 'trim', band, 0.045);
+        if (winW < 0.8) continue;
+        for (let k = 0; k < bays; k++) {
+          const off = -run / 2 + pitch * (k + 0.5);
+          face(off, sill - 0.12, winW + 0.2, 1.74, 'trim', 0xeceae3, 0.05);
+          face(off, sill, winW, 1.5, 'glass', glassCol, 0.075);
+          // one mullion, so a wide classroom light does not read as a shop window
+          face(off, sill, 0.08, 1.5, 'trim', 0xeceae3, 0.095);
+        }
+      }
+
+      if (i === bestWall) {
+        // a proud entrance bay, full height, with a canopy over the door
+        const bw = Math.min(5.2, len * 0.34);
+        face(0, 0.0, bw, b.h + 0.35, 'brickBuff', 0xc9b79a, 0.16);
+        face(0, 0.0, 2.4, 2.55, 'dark', 0x33383d, 0.24);
+        face(0, 0.0, 2.0, 2.35, 'glass', glassCol, 0.26);
+        face(0, 2.55, bw - 0.5, 0.24, 'trim', 0xe8e5dc, 0.42);      // canopy
+        face(0, 2.95, bw - 1.4, 0.5, 'trim', 0xf2efe6, 0.19);       // name panel
+      }
+    }
+
+    // a shallow parapet, since these are flat-roofed
+    extrudeWalls(mb[wallKey], poly, b.h, b.h + 0.45, tint);
+    mb.granite.polyFlat(poly, b.h + 0.48, 3, 0xffffff);
   }
 
   // landmark classes that keep the arcaded, period elevation
@@ -678,12 +788,21 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
   function emitBuilding(mb, b) {
     if (b.type === 'roof') { emitCanopy(mb, b); return; }
     const poly = b.poly;
-    const wallKey = M[b.mat] ? b.mat : 'redbrick';
+    // A chemist is painted, whatever it was built of, so the wall material is
+    // settled here rather than patched at each use — one source of truth for
+    // the whole elevation, parapet included.
+    // A school is buff brick or pale render, never the red brick and sandstone
+    // the arcade uses — that palette is half of why they read as churches.
+    const wallKey = b.pharmacy ? 'render'
+      : b.lm === 'school' ? (hash01(b.id, 21) > 0.45 ? 'brickBuff' : 'render')
+      : (M[b.mat] ? b.mat : 'redbrick');
     const isOut = b.type === 'shed' || b.type === 'garage' || b.type === 'garages';
 
     // per-building tint keeps a terrace from looking like one long extrusion
     let tint;
-    if (wallKey === 'render') tint = RENDER_TINTS[Math.floor(hash01(b.id, 3) * RENDER_TINTS.length)];
+    if (b.pharmacy) tint = 0xf3f1ec;               // near-white, not a cream
+    else if (b.lm === 'school') tint = wallKey === 'brickBuff' ? 0xd9c6a8 : 0xe6e2d7;
+    else if (wallKey === 'render') tint = RENDER_TINTS[Math.floor(hash01(b.id, 3) * RENDER_TINTS.length)];
     else {
       const v = 0.86 + hash01(b.id, 1) * 0.28;
       tint = new THREE.Color(v, v * 0.99, v * 0.97).getHex();
@@ -794,6 +913,8 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
       // which is what PERIOD is there to prevent. It was catching 24 of the 26
       // churches, the Miraculous Medal among them.
       blockWalls(mb, poly, b, wallKey, tint);
+    } else if (b.lm === 'school') {
+      schoolWalls(mb, poly, b, wallKey, tint);
     } else if (b.lm && b.lm !== 'commercial' && b.lm !== 'apartments') {
       arcadeWalls(mb, poly, b, wallKey, tint);
     } else if (!isOut) {
