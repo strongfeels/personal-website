@@ -31,17 +31,29 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14;
 /* Only ever visible from the driver's seat, and tappable because a phone has no
    G key — the chip is the entire radio interface there.
 
+   Off, it is a single "Radio on" button. On, it splits: the left half is the
+   station and cycles, the right half switches it off. The two halves are real
+   buttons inside one pill so the hit targets are unambiguous under a thumb.
+
    It sits under the street name on the left, not in the right-hand column with
    the clock and the speedo, because the minimap owns the bottom right and grows
    to 66vh when opened with M. In landscape on a phone that big map reaches the
    top of the screen and covered the chip completely. The left column holds only
    two lines of text and the touch stick is at the bottom, so nothing collides. */
-#radio { top: 88px; left: 22px; font-size: 13px; color: #cfe0ee;
-  background: rgba(12,18,26,.6); padding: 6px 13px; border-radius: 999px;
-  border: 1px solid rgba(255,255,255,.12); backdrop-filter: blur(8px);
-  opacity: 0; transition: opacity .3s, color .3s; }
-#radio.shown { opacity: 1; pointer-events: auto; cursor: pointer; }
-#radio.on { color: #ffd166; }
+#radio { top: 88px; left: 22px; display: flex; align-items: stretch;
+  background: rgba(12,18,26,.6); border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px; backdrop-filter: blur(8px); overflow: hidden;
+  opacity: 0; transition: opacity .3s; }
+#radio.shown { opacity: 1; }
+#radio button { font: inherit; font-size: 13px; color: #cfe0ee; background: none;
+  border: 0; padding: 6px 13px; cursor: pointer; pointer-events: none;
+  text-shadow: inherit; transition: background .15s, color .3s; }
+#radio.shown button { pointer-events: auto; }
+#radio button:hover { background: rgba(255,255,255,.09); }
+#radio.on #r-main { color: #ffd166; }
+#r-off { display: none; color: #9fb0c0; padding: 6px 11px;
+  border-left: 1px solid rgba(255,255,255,.15); }
+#radio.on #r-off { display: block; }
 
 #minimap { position: fixed; bottom: 18px; right: 18px; width: 190px; height: 190px;
   border-radius: 14px; border: 1px solid rgba(255,255,255,.16); opacity: .9;

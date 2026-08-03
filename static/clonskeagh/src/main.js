@@ -22,6 +22,8 @@ const hud = {
   minimap: document.getElementById('minimap'),
   audio: document.getElementById('audio'),
   radio: document.getElementById('radio'),
+  radioMain: document.getElementById('r-main'),
+  radioOff: document.getElementById('r-off'),
 };
 
 if (hasTouch()) hud.audio.textContent = '\u{1F50A} tap for sound';
@@ -118,15 +120,23 @@ const sound = new Sound();
 const radio = new Radio(sound);
 let radioTouched = false;
 
-// The chip is the whole radio interface on a phone, where there is no G key.
+// The chip is the whole radio interface on a phone, where there is no G key:
+// off it is one "Radio on" button, on it splits into cycle and off.
 radio.onstate = (label) => {
-  hud.radio.textContent = label ? '\u{1F4FB} ' + label : '\u{1F4FB} radio off';
+  hud.radioMain.textContent = label ? '\u{1F4FB} ' + label : '\u{1F4FB} Radio on';
   hud.radio.classList.toggle('on', !!label);
 };
-hud.radio.addEventListener('pointerdown', (e) => {
+// pointerdown, not click, so it beats the look-around drag handler on the canvas
+hud.radioMain.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   e.stopPropagation();
-  if (drive) radio.next(1);
+  if (!drive) return;
+  if (radio.station < 0) radio.power(); else radio.next(1);
+});
+hud.radioOff.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (drive) radio.tune(-1);
 });
 let stepPhase = 0;
 let meter = null;
@@ -178,6 +188,9 @@ function placeAtStart() {
 function toggleSound() {
   sound.start();                       // a tap counts as the gesture browsers want
   const on = sound.toggle();
+  // The master gain covers everything in the graph, but a no-CORS station plays
+  // outside it and has to be muted by hand.
+  radio.setMuted(!on);
   hud.audio.textContent = on ? '\u{1F50A} sound on' : '\u{1F507} muted';
   hud.audio.style.opacity = 1;
   setTimeout(() => { hud.audio.style.opacity = 0; }, 1400);
@@ -588,7 +601,7 @@ addEventListener('keydown', (e) => {
     controller.firstPerson = !controller.firstPerson;
     if (touch) touch.setFirstPerson(controller.firstPerson);
   }
-  if (e.code === 'KeyG' && drive) radio.next(e.shiftKey ? -1 : 1);
+  if (e.code === 'KeyG' && drive) { if (e.shiftKey) radio.tune(-1); else radio.next(1); }
   if (e.code === 'KeyM') hud.minimap.classList.toggle('big');
   if (e.code === 'KeyC') document.getElementById('help').classList.toggle('gone');
   if (e.code === 'KeyR') placeAtStart();
