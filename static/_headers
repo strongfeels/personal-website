@@ -22,5 +22,20 @@
 # TO UNDO: delete the two lines below and redeploy, then request reindexing in
 # Search Console. The config change takes effect immediately; getting back into
 # the index afterwards takes days to weeks.
+# ---- everything else ------------------------------------------------------
+#
+# nosniff: trust the declared Content-Type instead of inspecting the bytes and
+# guessing. Little to defend here — every file on this site is one we wrote,
+# there are no uploads — but it costs nothing.
+#
+# no-referrer rather than the usual strict-origin-when-cross-origin, which is
+# already the browser default and so would change nothing. The game's radio
+# opens connections to twenty third-party stream servers, and each request
+# would otherwise announce cianporteous.com in their access logs. This sends
+# nothing at all. The risk with no-referrer is servers that use referrer-based
+# hotlink protection, but all twenty stations were verified with curl, which
+# sends no referrer, and every one of them returned audio.
 /*
   X-Robots-Tag: noindex, nofollow
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
