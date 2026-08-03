@@ -317,6 +317,99 @@ export function makeBus(seed = 0) {
   return { group: g, wheels, wheelR: BUS.wheelR, big: true };
 }
 
+/**
+ * Ease each lane sideways around the cars parked along it.
+ *
+ * Every residential road here is 6m: the driving lane sits 1.50m from the
+ * centreline and parked cars at 1.95m, so with a car 1.78m wide they overlap by
+ * 1.33m. Traffic was not occasionally clipping a parked car, it was driving
+ * through every one of them, by geometry.
+ *
+ * Both the lanes and the parked cars are fixed, so this is decided once at load
+ * rather than swerved at runtime: sample the lane, work out how far it has to
+ * move to clear anything parked beside it, then smooth that profile so the line
+ * eases out and back instead of stepping. A car just follows its lane and the
+ * pulling-out happens for free, with nothing to oscillate.
+ *
+ * On a 6m street pulling out means crossing the centreline, which is exactly
+ * what you do here in reality, so the offset is capped rather than made to fit.
+ */
+const LAT_STEP = 2.0;     // metres between samples
+const LAT_NEED = 1.93;    // half a car plus half a parked car, plus a margin
+const LAT_MAX = 1.5;      // never wander further than this off the lane
+
+function bakeLateral(lanes, slots) {
+  const G = 20.0;
+  const grid = new Map();
+  for (const [x, z] of slots) {
+    const k = `${Math.floor(x / G)},${Math.floor(z / G)}`;
+    const a = grid.get(k);
+    if (a) a.push([x, z]); else grid.set(k, [[x, z]]);
+  }
+  for (const lane of lanes) {
+    const n = Math.max(2, Math.ceil(lane.len / LAT_STEP) + 1);
+    const lat = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const t = Math.min(lane.len, i * LAT_STEP);
+      const [x, z] = pointAt(lane, t);
+      const [ax, az] = pointAt(lane, Math.max(0, t - 1));
+      const [bx, bz] = pointAt(lane, Math.min(lane.len, t + 1));
+      const dl = Math.hypot(bx - ax, bz - az) || 1;
+      const nx = -(bz - az) / dl, nz = (bx - ax) / dl;
+      let push = 0;
+      const gx = Math.floor(x / G), gz = Math.floor(z / G);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const list = grid.get(`${gx + dx},${gz + dz}`);
+          if (!list) continue;
+          for (const [cx, cz] of list) {
+            const ox = cx - x, oz = cz - z;
+            // A generous along-track window on purpose: it makes the raw
+            // profile a plateau rather than a spike, so the smoothing below
+            // eases the shoulders instead of cutting the peak off.
+            if (Math.abs(ox * (bx - ax) / dl + oz * (bz - az) / dl) > 6.0) continue;
+            const side = ox * nx + oz * nz;
+            if (Math.abs(side) >= LAT_NEED) continue;
+            const want = -Math.sign(side || 1) * (LAT_NEED - Math.abs(side));
+            if (Math.abs(want) > Math.abs(push)) push = want;
+          }
+        }
+      }
+      lat[i] = Math.max(-LAT_MAX, Math.min(LAT_MAX, push));
+    }
+    // smooth, so the line eases out and back rather than stepping sideways
+    for (let pass = 0; pass < 4; pass++) {
+      const cp = Float32Array.from(lat);
+      for (let i = 0; i < n; i++) {
+        const a = cp[Math.max(0, i - 1)], b = cp[i], c = cp[Math.min(n - 1, i + 1)];
+        lat[i] = a * 0.25 + b * 0.5 + c * 0.25;
+      }
+    }
+    lane.lat = lat;
+  }
+}
+
+/** Lateral offset baked into a lane at distance t, interpolated. */
+function latAt(lane, t) {
+  const lat = lane.lat;
+  if (!lat) return 0;
+  const f = Math.max(0, Math.min(lat.length - 1, t / LAT_STEP));
+  const i = Math.floor(f), g = f - i;
+  const a = lat[i], b = lat[Math.min(lat.length - 1, i + 1)];
+  return a + (b - a) * g;
+}
+
+/** Where a vehicle actually sits: the lane, plus its baked pull-out. */
+function driveAt(lane, t) {
+  const [x, z] = pointAt(lane, t);
+  const off = latAt(lane, t);
+  if (!off) return [x, z];
+  const [ax, az] = pointAt(lane, Math.max(0, t - 1));
+  const [bx, bz] = pointAt(lane, Math.min(lane.len, t + 1));
+  const dl = Math.hypot(bx - ax, bz - az) || 1;
+  return [x - (bz - az) / dl * off, z + (bx - ax) / dl * off];
+}
+
 export function buildLanes(world) {
   const lanes = [];
   for (const r of world.roads) {
@@ -382,12 +475,20 @@ const LOOK = 9.5;              // metres ahead for another car
 const LOOK_PLAYER = 11.0;      // ...and for you, who are less predictable
 const LANE_HALF = 1.7;         // lateral tolerance; lanes here sit ~3m apart
 const LANE_HALF_PLAYER = 2.0;
+// Traffic coming the other way is not an obstruction, it is traffic: it will
+// have gone past by the time you get there, and you do not brake for it. This
+// matters because pulling out around parked cars puts a car within 1.7m of the
+// oncoming lane — with one tolerance for both, the two stopped for each other
+// and the streets locked up 30% of the time. Head-on only counts if it is
+// genuinely in your path.
+const LANE_HALF_ONCOMING = 0.85;
 const STUCK_UNSEEN = 60;   // seconds jammed before a car off-screen is recycled
 const STUCK_SEEN = 180;    // ...and a longer grace period if you can see it
 
 export class Traffic {
-  constructor(world, scene, count = 24, seed = 7) {
+  constructor(world, scene, count = 24, seed = 7, parkedSlots = null) {
     this.lanes = buildLanes(world);
+    if (parkedSlots && parkedSlots.length) bakeLateral(this.lanes, parkedSlots);
     this.cars = [];
     if (!this.lanes.length) return;
 
@@ -469,7 +570,7 @@ export class Traffic {
       const lane = this.lanes[c.lane];
 
       // look ahead for anything in our way and lift off if there is
-      const [px, pz] = pointAt(lane, c.t);
+      const [px, pz] = driveAt(lane, c.t);
       let blocked = false;
       const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw);
       const inWay = (dx, dz, reach, halfWidth) => {
@@ -482,8 +583,11 @@ export class Traffic {
       }
       for (const other of this.cars) {
         if (other === c || blocked) continue;
-        const [ox, oz] = pointAt(this.lanes[other.lane], other.t);
-        if (inWay(ox - px, oz - pz, LOOK, LANE_HALF)) { blocked = true; break; }
+        const [ox, oz] = driveAt(this.lanes[other.lane], other.t);
+        // same way as us, or head-on?
+        const facing = Math.sin(other.yaw) * fx + Math.cos(other.yaw) * fz;
+        const halfWidth = facing < 0 ? LANE_HALF_ONCOMING : LANE_HALF;
+        if (inWay(ox - px, oz - pz, LOOK, halfWidth)) { blocked = true; break; }
       }
 
       const want = blocked ? 0 : c.target;
@@ -513,8 +617,8 @@ export class Traffic {
       }
 
       const lane2 = this.lanes[c.lane];
-      const [x, z] = pointAt(lane2, c.t);
-      const [ax, az] = pointAt(lane2, Math.min(lane2.len, c.t + 4.5));
+      const [x, z] = driveAt(lane2, c.t);
+      const [ax, az] = driveAt(lane2, Math.min(lane2.len, c.t + 4.5));
       const dx = ax - x, dz = az - z;
       if (dx || dz) {
         const want2 = Math.atan2(dx, dz);

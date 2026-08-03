@@ -224,7 +224,9 @@ async function boot() {
   hud.loadingText.textContent = 'Putting people on the street…';
   await frame();
   crowd = new Crowd(worldData, scene, MOBILE ? 16 : 36);
-  traffic = new Traffic(worldData, scene, MOBILE ? 12 : 24);
+  // the parked cars are handed over so the lanes can be eased around them
+  traffic = new Traffic(worldData, scene, MOBILE ? 12 : 24, 7,
+    parked ? parked.slots : null);
   const tramway = buildTramway(worldData, materials, scene, built.colliders);
   // one tram each way, as on the real double track
   if (tramway) {
@@ -609,8 +611,11 @@ function animate() {
   if (crowd) crowd.update(dt, controller.pos, fwd);
   if (tram) for (const t of tram) t.update(dt, controller.pos);
   if (traffic) {
+    // You were only an obstacle while driving, so on foot the traffic went
+    // straight through you. You are always one now.
     traffic.update(dt, controller.pos,
-      drive ? [{ x: drive.x, z: drive.z }] : [], fwd);
+      drive ? [{ x: drive.x, z: drive.z }]
+            : [{ x: controller.pos.x, z: controller.pos.z }], fwd);
   }
   if (drive) {
     const throttle = controller.keys.has('KeyW') || controller.keys.has('ArrowUp') ? 1 : 0;
