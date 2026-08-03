@@ -5,6 +5,7 @@ import { createPlayer, PlayerController } from './player.js';
 import { Crowd } from './npc.js';
 import { Traffic, Drive, makeCar, CAR } from './vehicle.js';
 import { Sound } from './audio.js';
+import { Radio } from './radio.js';
 import { buildTramway, Tram } from './tram.js';
 import { hasTouch, TouchControls } from './touch.js';
 import { addCars } from './props.js';
@@ -20,6 +21,7 @@ const hud = {
   speed: document.getElementById('speed'),
   minimap: document.getElementById('minimap'),
   audio: document.getElementById('audio'),
+  radio: document.getElementById('radio'),
 };
 
 if (hasTouch()) hud.audio.textContent = '\u{1F50A} tap for sound';
@@ -113,6 +115,19 @@ let tram = null;
 let takenSlot = -1;
 let worldData = null;
 const sound = new Sound();
+const radio = new Radio(sound);
+let radioTouched = false;
+
+// The chip is the whole radio interface on a phone, where there is no G key.
+radio.onstate = (label) => {
+  hud.radio.textContent = label ? '\u{1F4FB} ' + label : '\u{1F4FB} radio off';
+  hud.radio.classList.toggle('on', !!label);
+};
+hud.radio.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (drive) radio.next(1);
+});
 let stepPhase = 0;
 let meter = null;
 let touch = null;
@@ -499,6 +514,12 @@ function enterCar() {
   controller.p.group.visible = false;
   controller.camYaw = yaw + Math.PI;
   if (touch) touch.setDriving(true);      // Run and Jump make no sense in a car
+
+  // A live stream costs about a megabyte a minute, so it stays off by default on
+  // a phone and the chip is there to turn it on. On a desktop it just plays.
+  if (radio.station < 0 && !radioTouched && !touch) { radioTouched = true; radio.tune(0); }
+  else radio.on();
+  hud.radio.classList.add('shown');
   return true;
 }
 
@@ -510,6 +531,8 @@ function exitCar() {
   controller.speed = 0;
   controller.p.group.visible = true;
   drive = null;
+  radio.off();
+  hud.radio.classList.remove('shown');
   if (touch) touch.setDriving(false);
 }
 
@@ -565,6 +588,7 @@ addEventListener('keydown', (e) => {
     controller.firstPerson = !controller.firstPerson;
     if (touch) touch.setFirstPerson(controller.firstPerson);
   }
+  if (e.code === 'KeyG' && drive) radio.next(e.shiftKey ? -1 : 1);
   if (e.code === 'KeyM') hud.minimap.classList.toggle('big');
   if (e.code === 'KeyC') document.getElementById('help').classList.toggle('gone');
   if (e.code === 'KeyR') placeAtStart();
@@ -641,6 +665,7 @@ function animate() {
   if (drive) {
     const throttle = controller.keys.has('KeyW') || controller.keys.has('ArrowUp') ? 1 : 0;
     sound.engine(drive.speed, throttle);
+    radio.update(throttle);
   } else {
     sound.engineOff();
   }

@@ -28,6 +28,15 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f14;
 #speed small { display: block; font: 500 11px ui-sans-serif, sans-serif; color: #9fb0c0;
   letter-spacing: .08em; }
 
+/* Only ever visible from the driver's seat, and tappable because a phone has no
+   G key — the chip is the entire radio interface there. */
+#radio { top: 116px; right: 22px; font-size: 13px; color: #cfe0ee;
+  background: rgba(12,18,26,.6); padding: 6px 13px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.12); backdrop-filter: blur(8px);
+  opacity: 0; transition: opacity .3s, color .3s; }
+#radio.shown { opacity: 1; pointer-events: auto; cursor: pointer; }
+#radio.on { color: #ffd166; }
+
 #minimap { position: fixed; bottom: 18px; right: 18px; width: 190px; height: 190px;
   border-radius: 14px; border: 1px solid rgba(255,255,255,.16); opacity: .9;
   box-shadow: 0 10px 32px rgba(0,0,0,.5); transition: width .22s, height .22s; }
