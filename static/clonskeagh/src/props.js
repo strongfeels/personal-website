@@ -295,7 +295,8 @@ const FITTINGS = {
   // 50 of the 52 outdoor "vending machines" are pay-and-display posts
   parking_tickets:  { post: [0.05, 0.95], head: [0.34, 0.62, 0.24], body: 0x35393c, face: 0x22262a },
   vending_other:    { post: null,         head: [0.62, 1.55, 0.42], body: 0x33383b, face: 0x22262a },
-  recycling:        { post: null,         head: [1.55, 1.65, 1.25], body: 0x1f6b3a, face: 0x18512d },
+  // a bring bank is a row of containers, built below — head is its collider size
+  recycling:        { post: null, head: [1.40, 1.85, 1.30], body: 0x4a4e51, face: 0x4a4e51, bank: true },
   charging_station: { post: [0.06, 0.55], head: [0.30, 0.80, 0.22], body: 0x2f3438, face: 0x9fd8b4 },
   clock:            { post: [0.055, 3.05], head: [0.52, 0.52, 0.13], body: 0x1e2124, face: 0xe6e0cf, sign: true },
   drinking_water:   { post: [0.07, 0.80], head: [0.26, 0.18, 0.26], body: 0x8d8b84, face: 0x8d8b84 },
@@ -346,6 +347,66 @@ function kioskParts() {
   return out;
 }
 const KIOSK = kioskParts();
+
+/**
+ * A bring bank: a row of charcoal containers with a coloured front panel each.
+ *
+ * It was one green box, which is not what these look like. The body is dark grey
+ * plastic with a domed shoulder; the colour is a panel on the front carrying the
+ * aperture, and it says which stream the unit takes. Glass is collected in three
+ * separate colours here — clear, green and brown — so a site that accepts glass
+ * at all gets three units, not one, which is why they come in rows of four.
+ *
+ * No published dimension sheet turned up for these, so 1.40 x 1.30 x 1.85 is
+ * taken from the proportions in a photograph and should be read as close.
+ */
+const BANK_BODY = 0x4a4e51, BANK_DARK = 0x303336, BANK_HOLE = 0x141617;
+const BANK_STREAM = {
+  cans:   0x2a6cb0,      // blue
+  green:  0x2f7d3f,
+  clear:  0xd3d6da,      // white/silver
+  brown:  0x8c3a2a,      // maroon
+  // textile banks are branded by whichever charity runs them rather than by a
+  // national colour, so this one is a choice, not a fact
+  clothes: 0x2f6f7d,
+  paper:  0x9a8248,
+};
+const BANK_W = 1.40, BANK_D = 1.30, BANK_H = 1.55, BANK_GAP = 0.05;
+
+/** Which containers stand at a site, given the streams it accepts. */
+function bankStreams(f) {
+  const acc = (f.recs || []).map((s) => s.toLowerCase());
+  const out = [];
+  if (acc.includes('cans')) out.push('cans');
+  // any glass at all means the full set of three, because they are never mixed
+  if (!acc.length || acc.some((a) => a.startsWith('glass'))) {
+    out.push('green', 'clear', 'brown');
+  }
+  if (acc.includes('clothes')) out.push('clothes');
+  if (acc.includes('paper')) out.push('paper');
+  return out.length ? out : ['green', 'clear', 'brown'];
+}
+
+/** Boxes for one bank, local space, +Z facing the street. */
+function bankParts(streams) {
+  const out = [];
+  const pitch = BANK_W + BANK_GAP;
+  const span = (streams.length - 1) * pitch;
+  streams.forEach((s, i) => {
+    const cx = -span / 2 + i * pitch;
+    const col = BANK_STREAM[s] ?? BANK_STREAM.green;
+    out.push([cx, 0.06, 0, BANK_W + 0.06, 0.12, BANK_D + 0.06, BANK_DARK]);      // plinth
+    out.push([cx, 0.12 + BANK_H / 2, 0, BANK_W, BANK_H, BANK_D, BANK_BODY]);     // body
+    // domed shoulder, faked with two narrowing slabs — at any distance you see
+    // one of these from, that reads as a curve
+    out.push([cx, BANK_H + 0.18, 0, BANK_W - 0.16, 0.14, BANK_D - 0.14, BANK_BODY]);
+    out.push([cx, BANK_H + 0.30, 0, BANK_W - 0.44, 0.10, BANK_D - 0.40, BANK_BODY]);
+    // the coloured panel, and the hole you post bottles through
+    out.push([cx, 0.12 + BANK_H * 0.62, BANK_D / 2 + 0.01, BANK_W - 0.34, BANK_H * 0.66, 0.04, col]);
+    out.push([cx, 0.12 + BANK_H * 0.86, BANK_D / 2 + 0.03, 0.30, 0.22, 0.04, BANK_HOLE]);
+  });
+  return out;
+}
 
 const STOP_YELLOW = 0xf2c317, STOP_GREEN = 0x1f7a3d, STOP_STEEL = 0xacb3b8;
 const SHELTER_FRAME = 0x3c4348, SHELTER_ROOF = 0x5b6469;
@@ -413,8 +474,11 @@ export function furnitureColliders(items, colliders) {
       const [w, h, d] = spec.head;
       const top = (spec.post ? spec.post[1] : 0) + h;
       // a street clock is a pole you walk under, so block the pole, not the dial
-      const wide = spec.post ? Math.max(0.12, spec.post[0] * 2) : w / 2;
+      let wide = spec.post ? Math.max(0.12, spec.post[0] * 2) : w / 2;
       const deep = spec.post ? Math.max(0.12, spec.post[0] * 2) : d / 2;
+      // a bring bank is a ROW; blocking one container's width leaves you able to
+      // walk through the other three
+      if (spec.bank) wide = (bankStreams(f).length * (BANK_W + BANK_GAP)) / 2;
       colliders.push({ x: f.x, z: f.z, hx: wide, hz: deep,
                        yaw: f.face ?? 0, soft: true, h: Math.min(top, 2.4) });
     } else {
@@ -680,6 +744,7 @@ export function makeFurniture(items, M) {
       const sp = specs[i];
       if (!sp) continue;
       if (sp.kiosk) { nHeads += KIOSK.length; continue; }
+      if (sp.bank) { nHeads += bankParts(bankStreams(fittings[i])).length; continue; }
       nHeads += 1;
       if (sp.stop) nHeads += busStopExtras(!!fittings[i].shelter).length;
     }
@@ -719,6 +784,18 @@ export function makeFurniture(items, M) {
       }
 
       const y0 = f.y || 0;
+      if (spec.bank) {
+        const co3 = Math.cos(theta), si3 = Math.sin(theta);
+        for (const [lx, ly, lz, w, h, d, c] of bankParts(bankStreams(f))) {
+          pos.set(f.x + lx * co3 + lz * si3, y0 + ly, f.z - lx * si3 + lz * co3);
+          scl.set(w, h, d);
+          m.compose(pos, q, scl);
+          heads.setMatrixAt(hi, m);
+          heads.setColorAt(hi, col.setHex(c).multiplyScalar(0.95 + hash01(i, 29) * 0.09));
+          hi++;
+        }
+        return;
+      }
       if (spec.stop) {
         const co2 = Math.cos(theta), si2 = Math.sin(theta);
         for (const [lx, ly, lz, w, h, d, c] of busStopExtras(!!f.shelter)) {

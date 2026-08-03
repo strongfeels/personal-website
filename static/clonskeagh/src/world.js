@@ -923,9 +923,17 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
       while (next < travelled + len) {
         const t = (next - travelled) / len;
         const px = x1 + (x2 - x1) * t, pz = z1 + (z2 - z1) * t;
+        next += 32;
+        // The column is offset 1.4m beyond its own kerb, which is clear of its
+        // own road but says nothing about the next one: at a junction the offset
+        // line runs straight out into the side road. 391 lamps stood in a
+        // carriageway, 380 of them in a road other than the one that placed
+        // them. No exemption here — a lamp belongs outside every carriageway,
+        // including its own, which also catches the few that a sharp curve
+        // pushes inward.
+        if (onOtherRoad(px, pz, -1)) continue;
         mb.dark.box(px, 0.14, pz, 0.075, 4.6, 0.075, 0, 1, 0x3a3d40);
         mb.dark.box(px, 4.7, pz, 0.5, 0.16, 0.22, yaw, 1, 0x4a4d50);
-        next += 32;
       }
       travelled += len;
     }

@@ -371,6 +371,17 @@ const NEAR = 130;       // ...and brought back this close, out of your eyeline
 // underfoot like a car. This gives one encounter every 2-3 minutes.
 const BUS_SEE = 450;
 const BUS_NEAR = 180;
+
+// What counts as "in my way". This used to be a cone — anything within 31.8
+// degrees of straight ahead out to 11m — and a cone that wide is wider than the
+// road: at 11m it spans 6.8m either side, so a car coming the other way in the
+// opposite lane read as an obstruction and the two of them stopped for each
+// other with a full lane of clear air between. Along-track and cross-track
+// instead, so it blocks only for something genuinely ahead AND in this lane.
+const LOOK = 9.5;              // metres ahead for another car
+const LOOK_PLAYER = 11.0;      // ...and for you, who are less predictable
+const LANE_HALF = 1.7;         // lateral tolerance; lanes here sit ~3m apart
+const LANE_HALF_PLAYER = 2.0;
 const STUCK_UNSEEN = 60;   // seconds jammed before a car off-screen is recycled
 const STUCK_SEEN = 180;    // ...and a longer grace period if you can see it
 
@@ -460,21 +471,19 @@ export class Traffic {
       // look ahead for anything in our way and lift off if there is
       const [px, pz] = pointAt(lane, c.t);
       let blocked = false;
+      const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw);
+      const inWay = (dx, dz, reach, halfWidth) => {
+        const along = dx * fx + dz * fz;
+        if (along <= 0.1 || along > reach) return false;
+        return Math.abs(dx * fz - dz * fx) < halfWidth;
+      };
       for (const o of obstacles) {
-        const dx = o.x - px, dz = o.z - pz;
-        const d = Math.hypot(dx, dz);
-        if (d > 12 || d < 0.1) continue;
-        const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw);
-        if ((dx * fx + dz * fz) / d > 0.82) { blocked = true; break; }
+        if (inWay(o.x - px, o.z - pz, LOOK_PLAYER, LANE_HALF_PLAYER)) { blocked = true; break; }
       }
       for (const other of this.cars) {
         if (other === c || blocked) continue;
         const [ox, oz] = pointAt(this.lanes[other.lane], other.t);
-        const dx = ox - px, dz = oz - pz;
-        const d = Math.hypot(dx, dz);
-        if (d > 11) continue;
-        const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw);
-        if ((dx * fx + dz * fz) / d > 0.85) { blocked = true; break; }
+        if (inWay(ox - px, oz - pz, LOOK, LANE_HALF)) { blocked = true; break; }
       }
 
       const want = blocked ? 0 : c.target;
