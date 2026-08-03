@@ -177,6 +177,18 @@ async function boot() {
     .then((r) => (r.ok ? r.json() : { trees: [] }))
     .catch(() => ({ trees: [] }));
   veg.trees = (veg.trees || []).concat(osmTrees.trees || []);
+  // Corrections from looking at the actual place. The detector and the survey
+  // both get individual trees wrong sometimes, and neither can be argued with
+  // from a desk — a removal is a circle, and anything drawn inside it goes.
+  const fixes = await fetch('./tree_fixes.json')
+    .then((r) => (r.ok ? r.json() : { remove: [], add: [] }))
+    .catch(() => ({ remove: [], add: [] }));
+  const cuts = fixes.remove || [];
+  if (cuts.length) {
+    veg.trees = veg.trees.filter((t) => !cuts.some(
+      (c) => Math.hypot(t.x - c.x, t.z - c.z) <= c.r));
+  }
+  veg.trees = veg.trees.concat(fixes.add || []);
 
   hud.loadingText.textContent = 'Mixing mortar…';
   await frame();
