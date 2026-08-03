@@ -359,6 +359,18 @@ export function buildLanes(world) {
 // -------------------------------------------------------------- traffic ---
 const SEE = 300;        // beyond this a car is hidden, so it can be moved
 const NEAR = 130;       // ...and brought back this close, out of your eyeline
+// A bus is different. There is always exactly one, and it is rare because it is
+// usually somewhere else — not because the pool might not contain one, which is
+// what a per-load coin gave: a bus for the whole session or none at all.
+// Letting it wander three times as far before being recycled, and bringing it
+// back at arm's length rather than into your lap, means you meet it when your
+// routes cross. Between SEE and BUS_SEE it is simulated and not drawn, so being
+// out there costs nothing.
+// Tuned by simulating a player walking and driving real lanes for eight
+// minutes: at 950/320 the bus was never met at all, and at 320/130 it was
+// underfoot like a car. This gives one encounter every 2-3 minutes.
+const BUS_SEE = 450;
+const BUS_NEAR = 180;
 const STUCK_UNSEEN = 60;   // seconds jammed before a car off-screen is recycled
 const STUCK_SEEN = 180;    // ...and a longer grace period if you can see it
 
@@ -375,11 +387,7 @@ export class Traffic {
     this.lanes.forEach((l, i) => {
       if (l.kind === 'secondary' || l.kind === 'tertiary') this.busLanes.push(i);
     });
-    // One bus per 60 vehicles rather than per 12 — five times rarer. At 24 cars
-    // that averages 0.4 of a bus, so it has to be a coin rather than a count:
-    // most of the time there is no bus on the road at all, which is the point.
-    const expected = this.busLanes.length ? count / 60 : 0;
-    const buses = Math.floor(expected) + (Math.random() < expected % 1 ? 1 : 0);
+    const buses = this.busLanes.length ? 1 : 0;
 
     for (let i = 0; i < count; i++) {
       const v = i < buses
@@ -389,7 +397,8 @@ export class Traffic {
       scene.add(v.group);
       const c = { ...v, lane: 0, t: 0, speed: 0, target: 8, yaw: 0, spin: 0, stuck: 0 };
       this.cars.push(c);
-      this.place(c, { x: 0, z: 0 }, null, 20, 220);
+      this.place(c, { x: 0, z: 0 }, null,
+        c.big ? BUS_NEAR : 20, c.big ? BUS_SEE - 120 : 220);
     }
   }
 
@@ -433,14 +442,16 @@ export class Traffic {
       // they follow you. One that drifts out of sight is moved back around you.
       const gx = c.group.position.x - playerPos.x, gz = c.group.position.z - playerPos.z;
       const away = gx * gx + gz * gz;
-      const unseen = away > SEE * SEE;
+      const far = c.big ? BUS_SEE : SEE;
+      const back = c.big ? BUS_NEAR : NEAR;
+      const unseen = away > far * far;
       if (unseen) {
-        this.place(c, playerPos, forward, NEAR, SEE - 40);
+        this.place(c, playerPos, forward, back, far - 40);
         c.stuck = 0;
       } else if (c.stuck > STUCK_SEEN) {
         // wedged in plain sight for a very long time — something is wrong with
         // it, so recycle anyway rather than leave a permanent ornament
-        this.place(c, playerPos, forward, NEAR, SEE - 40);
+        this.place(c, playerPos, forward, back, far - 40);
         c.stuck = 0;
       }
 
@@ -473,8 +484,8 @@ export class Traffic {
       // a car going nowhere for a minute has jammed against something; once it's
       // out of sight it gets recycled rather than sitting there forever
       c.stuck = c.speed < 0.4 ? c.stuck + dt : 0;
-      if (c.stuck > STUCK_UNSEEN && away > NEAR * NEAR) {
-        this.place(c, playerPos, forward, NEAR, SEE - 40);
+      if (c.stuck > STUCK_UNSEEN && away > back * back) {
+        this.place(c, playerPos, forward, back, far - 40);
         c.stuck = 0;
         continue;
       }
