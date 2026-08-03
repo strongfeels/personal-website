@@ -1,0 +1,26 @@
+# Response headers for cianporteous.com.
+#
+# This file is only read at the ROOT of the assets directory (./static, per
+# wrangler.toml). A copy in a subdirectory is silently ignored — which is what
+# happened to static/clonskeagh/_headers, whose cache rules never once applied.
+# If you add rules, they belong here.
+
+# ---- temporarily hidden from search engines -------------------------------
+#
+# X-Robots-Tag rather than a robots.txt Disallow, and deliberately so: robots.txt
+# only blocks crawling, and a crawler that is not allowed to fetch the page never
+# sees a noindex on it, so pages already in the index linger there as bare links.
+# The two mechanisms work against each other. This header is the one that
+# actually takes a page out of an index, and it covers the JSON and assets as
+# well as the HTML.
+#
+# For an immediate drop rather than a wait for the next crawl, pair this with
+# Google Search Console -> Removals -> Temporary removal (about six months) and
+# Bing Webmaster Tools -> Block URLs. This header is what keeps it out once
+# those expire.
+#
+# TO UNDO: delete the two lines below and redeploy, then request reindexing in
+# Search Console. The config change takes effect immediately; getting back into
+# the index afterwards takes days to weeks.
+/*
+  X-Robots-Tag: noindex, nofollow
