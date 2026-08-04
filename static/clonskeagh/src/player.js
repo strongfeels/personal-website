@@ -133,7 +133,7 @@ export class PlayerController {
     this.yaw = 0;                 // facing
     this.camYaw = Math.PI;
     this.camPitch = 0.30;
-    this.camDist = 7.0;
+    this.camDist = 9.5;          // scroll range is 2.2-28
     this.firstPerson = false;
     this.onGround = true;
     this.phase = 0;

@@ -607,9 +607,12 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
       }
     }
 
-    // a parapet, since these are flat-roofed
-    extrudeWalls(mb[wallKey], poly, b.h, b.h + 0.55, tint);
-    mb.granite.polyFlat(poly, b.h + 0.58, 3, 0xffffff);
+    // A parapet only where the roof really is flat. On a pitched parade unit it
+    // would stand in front of the eaves and hide the roof it is meant to hide.
+    if (b.roof === 'flat') {
+      extrudeWalls(mb[wallKey], poly, b.h, b.h + 0.55, tint);
+      mb.granite.polyFlat(poly, b.h + 0.58, 3, 0xffffff);
+    }
 
     if (b.amenity === 'pub' || b.amenity === 'bar') pubFront(mb, poly, b, wallKey, tint);
   }

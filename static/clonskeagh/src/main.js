@@ -574,7 +574,10 @@ function driveCamera(dt) {
     return;
   }
 
-  const dist = 10.5, cy = Math.cos(controller.camPitch);
+  // The same distance you were at on foot. This was pinned at 10.5, so getting
+  // into a car jumped the view out and the scroll wheel then did nothing until
+  // you got out again.
+  const dist = controller.camDist, cy = Math.cos(controller.camPitch);
   camera.position.set(
     drive.x + Math.sin(controller.camYaw) * dist * cy,
     2.0 + Math.sin(controller.camPitch) * dist + 0.8,
