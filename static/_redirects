@@ -2,3 +2,13 @@
 # both are live today and may be linked or bookmarked.
 /about      /  301
 /about.html /  301
+
+# The game moved to its own domain on 2026-08-04. This link was sent to people
+# before the move, so it has to keep working indefinitely — treat it as
+# permanent, not as a migration aid to be tidied away later.
+#
+# Unlike Cloudflare Pages, Workers static assets follow a redirect even when a
+# real file sits at the path, so static/clonskeagh/ can stay in the repo without
+# shadowing this rule. It is unreachable either way and only costs 15 MB.
+/clonskeagh/*  https://clonskeagh3d.com/:splat  301
+/clonskeagh    https://clonskeagh3d.com/        301
