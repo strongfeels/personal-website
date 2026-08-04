@@ -35,7 +35,7 @@
  * nothing else. `cors: false` picks the direct path, `lvl` trims the level for
  * a station that runs hot or, for talk, needs to sit further forward.
  */
-export const STATIONS = [
+const DIAL = [
   { name: 'SomaFM Mission Control', url: 'https://ice1.somafm.com/missioncontrol-128-mp3' },
   { name: 'SomaFM SF 10-33',        url: 'https://ice1.somafm.com/sf1033-128-mp3' },
   { name: 'SomaFM Drone Zone',      url: 'https://ice1.somafm.com/dronezone-128-mp3' },
@@ -64,6 +64,51 @@ export const STATIONS = [
   { name: 'RTE Radio 1',            url: 'https://icecast.rte.ie/radio1', cors: false, lvl: 1.25 },
   { name: 'RTE 2FM',                url: 'https://icecast.rte.ie/2fm', cors: false, lvl: 1.15 },
 ];
+
+/**
+ * The dial is shuffled, and shuffled per player rather than per visit.
+ *
+ * The seed is kept in localStorage, so your dial is your dial: station 4 stays
+ * station 4 next time you come back, which is the whole point of a dial you
+ * learn. A fresh shuffle on every page load would just be noise.
+ *
+ * Math.random cannot be seeded, so the shuffle runs off mulberry32 — small,
+ * well distributed, and enough for ordering twenty things. If localStorage is
+ * unavailable, which is what private browsing looks like, it falls back to an
+ * unseeded shuffle: still random, just not remembered.
+ *
+ * Note this makes the opening station random too, since entering a car for the
+ * first time tunes to position 0.
+ */
+function shuffled(list) {
+  const KEY = 'clonskeagh.radio.seed';
+  let seed;
+  try {
+    let stored = localStorage.getItem(KEY);
+    if (!stored) {
+      stored = String((Math.random() * 4294967296) >>> 0);
+      localStorage.setItem(KEY, stored);
+    }
+    seed = Number(stored) >>> 0;
+  } catch (err) {
+    seed = (Math.random() * 4294967296) >>> 0;
+  }
+  const rnd = () => {
+    seed = (seed + 0x6d2b79f5) >>> 0;
+    let t = seed;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const out = list.slice();
+  for (let i = out.length - 1; i > 0; i--) {     // Fisher-Yates
+    const j = Math.floor(rnd() * (i + 1));
+    const tmp = out[i]; out[i] = out[j]; out[j] = tmp;
+  }
+  return out;
+}
+
+export const STATIONS = shuffled(DIAL);
 
 const VOLUME = 0.55;        // sits under the engine rather than over it
 const DUCK = 0.45;          // how far it drops at full throttle
