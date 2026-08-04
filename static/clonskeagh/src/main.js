@@ -112,6 +112,7 @@ let traffic = null;
 let parked = null;              // the instanced parked cars
 let worldColliders = null;
 let drive = null;               // set while you're behind the wheel
+let driveSwing = 0;             // seconds of camera easing left after getting in
 let world = null;               // the streaming chunk manager
 let tram = null;
 let takenSlot = -1;
@@ -525,7 +526,10 @@ function enterCar() {
   drive = new Drive(car, worldColliders);
   drive.place(x, z, yaw);
   controller.p.group.visible = false;
-  controller.camYaw = yaw + Math.PI;
+  // Not a snap. driveCamera already knows how to swing the camera round behind
+  // the car — it does it every frame once you are moving — so getting in just
+  // asks for the same easing rather than teleporting the view.
+  driveSwing = 1.2;
   if (touch) touch.setDriving(true);      // Run and Jump make no sense in a car
 
   // A live stream costs about a megabyte a minute, so it stays off by default on
@@ -544,18 +548,24 @@ function exitCar() {
   controller.speed = 0;
   controller.p.group.visible = true;
   drive = null;
+  driveSwing = 0;
   radio.off();
   hud.radio.classList.remove('shown');
   if (touch) touch.setDriving(false);
 }
 
 function driveCamera(dt) {
-  // swing round behind the car once it's moving, but let the mouse override
-  if (Math.abs(drive.speed) > 1.2) {
+  // Swing round behind the car once it's moving, but let the mouse override.
+  // Also for a moment after getting in, which is what stops the view snapping.
+  if (driveSwing > 0) driveSwing -= dt;
+  const settling = driveSwing > 0;
+  if (Math.abs(drive.speed) > 1.2 || settling) {
     const want = drive.yaw + Math.PI;
     let d = want - controller.camYaw;
     d = Math.atan2(Math.sin(d), Math.cos(d));
-    controller.camYaw += d * Math.min(1, dt * 1.6);
+    // A touch quicker while settling, so it is finished before you pull away —
+    // at 2.6/s, 1.2 s covers 96% of the turn — then back to the gentle rate.
+    controller.camYaw += d * Math.min(1, dt * (settling ? 2.6 : 1.6));
   }
   if (controller.firstPerson) {
     // sit in the driver's seat. Local +z is the way the car faces and +y is up,
