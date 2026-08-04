@@ -94,7 +94,7 @@ function pointAt(route, t) {
 }
 
 export class Crowd {
-  constructor(world, scene, count = 30, seed = 20260731) {
+  constructor(world, scene, count = 30, seed = 20260731, at = { x: 0, z: 0 }) {
     this.routes = buildFootpaths(world);
     this.links = linkEnds(this.routes);
     this.people = [];
@@ -115,7 +115,9 @@ export class Crowd {
       const c = createCharacter(look);
       scene.add(c.group);
 
-      const [ri, t0] = this.spot({ x: 0, z: 0 }, null, 5, 170) || [0, 0];
+      // around the player's starting point, not the world origin — spawn is
+      // 214 m from (0,0), so seeding there left the opening street deserted
+      const [ri, t0] = this.spot(at, null, 5, 170) || [0, 0];
       this.people.push({
         c,
         route: ri,

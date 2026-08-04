@@ -541,7 +541,7 @@ const PLACE_RELAX = 300;   // ...after which it stops insisting on being behind 
 const STUCK_SEEN = 180;    // ...and a longer grace period if you can see it
 
 export class Traffic {
-  constructor(world, scene, count = 24, seed = 7, parkedSlots = null) {
+  constructor(world, scene, count = 24, seed = 7, parkedSlots = null, at = { x: 0, z: 0 }) {
     this.lanes = buildLanes(world);
     if (parkedSlots && parkedSlots.length) bakeLateral(this.lanes, parkedSlots);
     this.cars = [];
@@ -564,8 +564,13 @@ export class Traffic {
       scene.add(v.group);
       const c = { ...v, lane: 0, t: 0, speed: 0, target: 8, yaw: 0, spin: 0, stuck: 0 };
       this.cars.push(c);
-      this.place(c, { x: 0, z: 0 }, null,
-        c.big ? BUS_NEAR : 70, c.big ? BUS_SEE - 120 : 300);
+      // Seeded around where the player actually starts, not the world origin,
+      // and much closer in than a recycled car is allowed to appear. The
+      // out-of-sight rule exists so nothing materialises in front of you
+      // mid-game; at load there is nothing to materialise in front of, and
+      // applying it anyway left the opening street empty.
+      this.place(c, at, null,
+        c.big ? BUS_NEAR : 25, c.big ? BUS_SEE - 120 : 300);
     }
   }
 
@@ -576,6 +581,7 @@ export class Traffic {
    * us prefer spots behind the camera, so nothing pops into view.
    */
   place(c, at, forward, minD, maxD) {
+    let hit = null;                           // a spot actually inside the ring
     let best = null, bestErr = Infinity;      // nearest miss, whichever side
     let far = null, farErr = Infinity;        // nearest miss that is not too close
     const pool = c.big ? this.busLanes : null;
@@ -595,7 +601,7 @@ export class Traffic {
       const d = Math.hypot(dx, dz);
       const inBand = d >= minD && d <= maxD;
       const behind = !forward || (dx * forward.x + dz * forward.z) / (d || 1) <= 0.2;
-      if (inBand && (behind || k >= PLACE_RELAX)) { best = [li, t, lane]; break; }
+      if (inBand && (behind || k >= PLACE_RELAX)) { hit = [li, t, lane]; break; }
       const err = inBand ? 0 : (d < minD ? minD - d : d - maxD);
       // Two fallbacks, and the order matters. A point picked uniformly from 400km
       // of lane is almost never inside the band — 89% of respawns used to land
@@ -606,7 +612,11 @@ export class Traffic {
       if (d >= minD && err < farErr) { farErr = err; far = [li, t, lane]; }
       if (err < bestErr) { bestErr = err; best = [li, t, lane]; }
     }
-    best = far || best;
+    // `hit` first, and it has to be a separate variable: this line used to read
+    // `best = far || best`, and since the in-band branch assigned to `best` and
+    // broke, a good spot inside the ring was overwritten by the too-far fallback
+    // on the way out. Every car ended up just past the ring instead of in it.
+    best = hit || far || best;
     if (!best) return false;
     const [li, t, lane] = best;
     c.lane = li;

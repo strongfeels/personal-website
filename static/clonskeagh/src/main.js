@@ -254,6 +254,14 @@ async function boot() {
   scene.add(player.group);
   controller = new PlayerController(player, camera, built.colliders, canvas);
 
+  // Before the crowd and the traffic are built, not after. Both are seeded
+  // around the player and both are recycled against the player's position every
+  // frame — and until this runs, that position is (0, 0, 0). Cars seeded around
+  // spawn were 200-500 m from the origin, so the recycle rule judged them out of
+  // sight and dragged them into a ring around (0,0) before the player had even
+  // been put on the map.
+  placeAtStart();
+
   if (hasTouch()) {
     document.body.classList.add('touch');
     touch = new TouchControls((action) => {
@@ -270,10 +278,14 @@ async function boot() {
 
   hud.loadingText.textContent = 'Putting people on the street…';
   await frame();
-  crowd = new Crowd(worldData, scene, MOBILE ? 16 : 36);
+  // Both pools are seeded around where you actually start. They used to seed
+  // around the world origin, which is 214 m from spawn, so the street you open
+  // on was empty while the traffic and the crowd milled about out of sight.
+  const startAt = { x: controller.pos.x, z: controller.pos.z };
+  crowd = new Crowd(worldData, scene, MOBILE ? 16 : 36, 20260731, startAt);
   // the parked cars are handed over so the lanes can be eased around them
   traffic = new Traffic(worldData, scene, MOBILE ? 18 : 36, 7,
-    parked ? parked.slots : null);
+    parked ? parked.slots : null, startAt);
   const tramway = buildTramway(worldData, materials, scene, built.colliders);
   // one tram each way, as on the real double track
   if (tramway) {
@@ -281,7 +293,6 @@ async function boot() {
   }
   worldColliders = built.colliders;
 
-  placeAtStart();
 
   // ?x=&z=&yaw=&pitch=&dist=&sky= — handy for grabbing a specific view
   const q = new URLSearchParams(location.search);
@@ -519,7 +530,7 @@ function enterCar() {
   // and drop its collider, or the car would be stuck inside itself
   const ci = worldColliders.findIndex(
     (c) => Math.abs(c.x - x) < 0.02 && Math.abs(c.z - z) < 0.02 && c.hx > 2);
-  if (ci >= 0) worldColliders.splice(ci, 1);
+  if (ci >= 0) { worldColliders.splice(ci, 1); delete worldColliders.__grid; }
 
   const car = makeCar(0x1f4f7a, 991, false);
   scene.add(car.group);
@@ -540,6 +551,33 @@ function enterCar() {
   return true;
 }
 
+// scratch objects for re-parking, so getting out of a car allocates nothing
+const _pm = new THREE.Matrix4(), _pq = new THREE.Quaternion(), _pe = new THREE.Euler();
+const _pv = new THREE.Vector3(), _pone = new THREE.Vector3(1, 1, 1);
+const _pcol = new THREE.Color();
+const WHEEL_AT = [[0.82, 1.42], [-0.82, 1.42], [0.82, -1.42], [-0.82, -1.42]];
+
+/** Stand slot `i` of the instanced parked field at (x, z, yaw) — body and wheels.
+ *  The offsets match addCars in props.js; they have to, or the wheels detach. */
+function parkCar(i, x, z, yaw) {
+  _pe.set(0, yaw, 0); _pq.setFromEuler(_pe);
+  _pm.compose(_pv.set(x, 0, z), _pq, _pone);
+  parked.cars.setMatrixAt(i, _pm);
+  const cs = Math.cos(yaw), sn = Math.sin(yaw);
+  let wi = i * 4;
+  for (const [wx, wz] of WHEEL_AT) {
+    _pm.compose(_pv.set(x + wx * cs + wz * sn, 0.33, z - wx * sn + wz * cs), _pq, _pone);
+    parked.wheels.setMatrixAt(wi++, _pm);
+  }
+  parked.cars.instanceMatrix.needsUpdate = true;
+  parked.wheels.instanceMatrix.needsUpdate = true;
+  // it keeps the colour it had while you were driving, rather than reverting
+  if (parked.cars.instanceColor) {
+    parked.cars.setColorAt(i, _pcol.setHex(0x1f4f7a));
+    parked.cars.instanceColor.needsUpdate = true;
+  }
+}
+
 function exitCar() {
   if (!drive) return;
   // step out onto the driver's side — starboard, this being Ireland
@@ -547,8 +585,28 @@ function exitCar() {
   controller.pos.set(drive.x + rx * 1.9, 0, drive.z + rz * 1.9);
   controller.speed = 0;
   controller.p.group.visible = true;
+
+  // Hand the car back to the parked field, at the kerb where you left it rather
+  // than the bay you found it in. Without this the slot stayed flagged as taken,
+  // nearestParkedSlot skipped it for the rest of the session, and the car you
+  // had just stepped out of could never be driven again — while its mesh sat in
+  // the scene forever, one more every time you took another one.
+  if (parked && takenSlot >= 0) {
+    const px = drive.x, pz = drive.z, pyaw = drive.yaw;
+    parked.slots[takenSlot] = [px, pz, pyaw];
+    parkCar(takenSlot, px, pz, pyaw);
+    worldColliders.push({ x: px, z: pz, hx: CAR.len / 2, hz: CAR.wid / 2,
+                          yaw: Math.PI / 2 - pyaw });
+    // The collider grid caches on array length alone, and enter-then-exit
+    // returns it to the length it started at — so without this the next lookup
+    // would hand back a grid still holding the car's old position.
+    delete worldColliders.__grid;
+  }
+  scene.remove(drive.car.group);
+
   drive = null;
   driveSwing = 0;
+  takenSlot = -1;
   radio.off();
   hud.radio.classList.remove('shown');
   if (touch) touch.setDriving(false);
