@@ -12,6 +12,10 @@ const PAVE_OFFSET = 0.95;        // matches world.js: kerb + half the 1.9 m slab
 const JOIN_DIST = 9.0;           // how close two path ends must be to connect
 const DRAW_RANGE = 190;          // hide people beyond this, to spare draw calls
 const NEAR = 55;                 // recycled walkers reappear this far off, at least
+// Breaks the moment it finds a spot in the ring — about 440 tries on average,
+// 63 us — so the ceiling only costs anything on the rare respawn that misses.
+const SPOT_TRIES = 1500;
+const SPOT_RELAX = 1100;         // after this it stops insisting on being behind you
 const FOOT_LIFT = 0.095;         // sole height above the body origin, at scale 1
 
 // A Dublin street's worth of coats, hair and skin tones.
@@ -135,8 +139,9 @@ export class Crowd {
    * so nobody materialises in front of your eyes.
    */
   spot(at, forward, minD, maxD) {
-    let best = null, bestErr = Infinity;
-    for (let k = 0; k < 26; k++) {
+    let best = null, bestErr = Infinity;      // nearest miss, whichever side
+    let far = null, farErr = Infinity;        // nearest miss that is not too close
+    for (let k = 0; k < SPOT_TRIES; k++) {
       const ri = Math.floor(Math.random() * this.routes.length);
       const t = Math.random() * this.routes[ri].len;
       const [x, z] = pointAt(this.routes[ri], t);
@@ -144,11 +149,24 @@ export class Crowd {
       const d = Math.hypot(dx, dz);
       const inBand = d >= minD && d <= maxD;
       const behind = !forward || (dx * forward.x + dz * forward.z) / (d || 1) <= 0.2;
-      if (inBand && (behind || k >= 20)) return [ri, t];
+      if (inBand && (behind || k >= SPOT_RELAX)) return [ri, t];
       const err = inBand ? 0 : (d < minD ? minD - d : d - maxD);
+      // Same two-fallback rule as Traffic.place, and for the same reason: a
+      // point picked uniformly from 628 km of footpath lands in the ring about
+      // a quarter of a percent of the time, so 26 tries succeeded 6.7% of the
+      // time and the rest took the nearest miss — which put a walker 22 m away,
+      // in front of you. 7% landed inside minD.
+      //
+      // Raising the try count ALONE makes it worse, not better: more samples
+      // means the nearest miss is nearer, and at 400 tries the too-close rate
+      // went up to 9.9%. The preference for overshoot is the half that fixes
+      // it. Overshooting is safe here because the best miss above minD sits
+      // just past maxD (175 m), well inside the 230 m recycle threshold, so it
+      // does not bounce straight back.
+      if (d >= minD && err < farErr) { farErr = err; far = [ri, t]; }
       if (err < bestErr) { bestErr = err; best = [ri, t]; }
     }
-    return best;
+    return far || best;
   }
 
   update(dt, playerPos, forward = null) {

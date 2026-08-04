@@ -929,7 +929,12 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     // a metre of extra eaves reads as generous, so only the badly wrong ones
     // give up their pitch.
     const overhang = roofOverhang(poly, cx, cz, ux, uz, vx, vz, halfL, halfD);
-    const flatRoof = b.roof === 'flat' || overhang > 3.0;
+    // `rf` is the largest ridge-aligned rectangle that actually fits inside the
+    // footprint, measured in the bake. With one, a badly overhanging building
+    // can still be pitched — over the fitted rectangle rather than over its
+    // bounding box — instead of falling back to a flat roof.
+    const fit = (b.rf && overhang > 3.0) ? b.rf : null;
+    const flatRoof = b.roof === 'flat' || (overhang > 3.0 && !fit);
 
     const wallTop = flatRoof ? b.h + 0.35 : b.h;
     extrudeWalls(mb[wallKey], poly, 0, wallTop, tint);
@@ -938,12 +943,22 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
     if (flatRoof) {
       mb.dark.polyFlat(poly, b.h + 0.36, 3, 0x4a4a4c);
     } else {
-      const L = halfL + EAVE, D = halfD + EAVE, y0 = b.h, y1 = b.h + b.roofH;
+      // Everything below is written against a centre and two half-extents, so
+      // swapping in the fitted rectangle re-pitches the roof without touching a
+      // line of the gable, hip, chimney or gablet code.
+      const rhL = fit ? fit[2] : halfL, rhD = fit ? fit[3] : halfD;
+      const rcx = fit ? ux * fit[0] + vx * fit[1] : cx;
+      const rcz = fit ? uz * fit[0] + vz * fit[1] : cz;
+      const RP = (du, dv, y) => [rcx + ux * du + vx * dv, y, rcz + uz * du + vz * dv];
+      // the strip the rectangle does not cover keeps a flat roof at eaves level,
+      // which is what a rear return or a porch actually has
+      if (fit) mb.dark.polyFlat(poly, b.h + 0.02, 3, 0x4a4a4c);
+      const L = rhL + EAVE, D = rhD + EAVE, y0 = b.h, y1 = b.h + b.roofH;
       const rt = 0.9 + hash01(b.id, 7) * 0.2;
       const rc = new THREE.Color(rt * 0.95, rt * 0.97, rt).getHex();
       const ridgeShrink = b.roof === 'hip' ? Math.min(D, L * 0.75) : 0;
-      const rA = P(-L + ridgeShrink, 0, y1), rB = P(L - ridgeShrink, 0, y1);
-      const e00 = P(-L, -D, y0), e10 = P(L, -D, y0), e11 = P(L, D, y0), e01 = P(-L, D, y0);
+      const rA = RP(-L + ridgeShrink, 0, y1), rB = RP(L - ridgeShrink, 0, y1);
+      const e00 = RP(-L, -D, y0), e10 = RP(L, -D, y0), e11 = RP(L, D, y0), e01 = RP(-L, D, y0);
       const slopeLen = Math.hypot(D, b.roofH);
       const uvS = (len, w) => [[0, 0], [len / 1.2, 0], [len / 1.2, w / 1.2], [0, w / 1.2]];
       // all wound so the normals face up and out of the roof
@@ -954,9 +969,9 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
         mb.roof.tri(e00, e01, rA, [[0, 0], [D * 1.6, 0], [D * 0.8, slopeLen]], rc);
       } else {
         // gable ends are masonry, not tile
-        const g0 = P(-halfL, -halfD, y0), g1 = P(-halfL, halfD, y0), gt = P(-halfL, 0, y1);
-        const h0 = P(halfL, halfD, y0), h1 = P(halfL, -halfD, y0), ht = P(halfL, 0, y1);
-        const guv = [[0, 0], [halfD * 2 / BRICK_UV, 0], [halfD / BRICK_UV, b.roofH / BRICK_UV]];
+        const g0 = RP(-rhL, -rhD, y0), g1 = RP(-rhL, rhD, y0), gt = RP(-rhL, 0, y1);
+        const h0 = RP(rhL, rhD, y0), h1 = RP(rhL, -rhD, y0), ht = RP(rhL, 0, y1);
+        const guv = [[0, 0], [rhD * 2 / BRICK_UV, 0], [rhD / BRICK_UV, b.roofH / BRICK_UV]];
         mb[wallKey].tri(g0, g1, gt, guv, tint);
         mb[wallKey].tri(h0, h1, ht, guv, tint);
       }
@@ -964,7 +979,7 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
         // paired rendered stacks on chamfered bases, and the miniature gablets
         // that embellish the roofline (NIAH)
         for (const side of [-1, 1]) {
-          const sx = cx + ux * (halfL * 0.55) * side, sz = cz + uz * (halfL * 0.55) * side;
+          const sx = rcx + ux * (rhL * 0.55) * side, sz = rcz + uz * (rhL * 0.55) * side;
           for (const o of [-0.5, 0.5]) {
             mb.render.box(sx + vx * o, b.h - 0.3, sz + vz * o, 0.34, b.roofH + 1.6, 0.34,
               b.ridge, 1.5, 0xd8d2c6, false);
@@ -972,11 +987,11 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
               b.ridge, 1, 0x8a4a30);            // terracotta pot
           }
         }
-        const gab = Math.max(2, Math.round(halfL / 4));
+        const gab = Math.max(2, Math.round(rhL / 4));
         for (let g = -gab; g <= gab; g += 2) {
-          const gx2 = cx + ux * (g * halfL / (gab + 1)), gz2 = cz + uz * (g * halfL / (gab + 1));
+          const gx2 = rcx + ux * (g * rhL / (gab + 1)), gz2 = rcz + uz * (g * rhL / (gab + 1));
           for (const s2 of [-1, 1]) {
-            const px2 = gx2 + vx * halfD * s2, pz2 = gz2 + vz * halfD * s2;
+            const px2 = gx2 + vx * rhD * s2, pz2 = gz2 + vz * rhD * s2;
             mb.roof.tri([px2 - ux * 0.9, b.h, pz2 - uz * 0.9],
                         [px2 + ux * 0.9, b.h, pz2 + uz * 0.9],
                         [px2, b.h + 1.15, pz2],
@@ -987,7 +1002,7 @@ export function buildWorld(world, M, scene, landmarks = { landmarks: [] },
       // chimney on a gable end — the thing that makes a Dublin roofline read right
       if (b.lm !== 'hospital' && !isOut && b.area > 45 && hash01(b.id, 11) > 0.25) {
         const side = hash01(b.id, 12) > 0.5 ? 1 : -1;
-        const chx = cx + ux * (halfL - 0.55) * side, chz = cz + uz * (halfL - 0.55) * side;
+        const chx = rcx + ux * (rhL - 0.55) * side, chz = rcz + uz * (rhL - 0.55) * side;
         mb.redbrick.box(chx, b.h - 0.4, chz, 0.42, b.roofH + 1.0, 0.34, b.ridge, BRICK_UV, 0xb08a72, false);
         mb.dark.box(chx, b.h + b.roofH + 0.55, chz, 0.5, 0.16, 0.42, b.ridge, 1, 0x38383a);
       }
