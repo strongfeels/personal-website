@@ -532,7 +532,15 @@ function enterCar() {
     (c) => Math.abs(c.x - x) < 0.02 && Math.abs(c.z - z) < 0.02 && c.hx > 2);
   if (ci >= 0) { worldColliders.splice(ci, 1); delete worldColliders.__grid; }
 
-  const car = makeCar(0x1f4f7a, 991, false);
+  // Keep the colour it was parked in. This was a fixed blue, so every car in
+  // the world turned the same shade the moment you got into it — and, once
+  // exitCar started handing cars back, stayed that way.
+  let bodyHex = 0x1f4f7a;
+  if (parked.cars.instanceColor) {
+    parked.cars.getColorAt(i, _pcol);
+    bodyHex = _pcol.getHex();
+  }
+  const car = makeCar(bodyHex, 991, false);
   scene.add(car.group);
   drive = new Drive(car, worldColliders);
   drive.place(x, z, yaw);
@@ -571,11 +579,6 @@ function parkCar(i, x, z, yaw) {
   }
   parked.cars.instanceMatrix.needsUpdate = true;
   parked.wheels.instanceMatrix.needsUpdate = true;
-  // it keeps the colour it had while you were driving, rather than reverting
-  if (parked.cars.instanceColor) {
-    parked.cars.setColorAt(i, _pcol.setHex(0x1f4f7a));
-    parked.cars.instanceColor.needsUpdate = true;
-  }
 }
 
 function exitCar() {
