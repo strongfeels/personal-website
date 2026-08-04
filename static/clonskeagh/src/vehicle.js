@@ -433,25 +433,70 @@ export function buildLanes(world) {
     const l = Math.hypot(bx - ax, bz - az) || 1;
     return [(bx - ax) / l, (bz - az) / l];
   };
-  for (const lane of lanes) {
+  // Link each lane end to wherever another lane carries on from it — including
+  // partway along that lane, which is the whole point. Linking end-to-START
+  // only, as this did, cannot turn a car out of a side road onto a main road:
+  // OSM splits a main road into long ways, so its start is typically hundreds
+  // of metres from the junction and nothing is in range. 44% of lanes ended up
+  // with no successor at all, and every car reaching one of them was flipped
+  // onto its own reverse lane and driven back the way it came.
+  //
+  // Sample every lane, index the samples, and join to the nearest sample of any
+  // other lane. This is all build-time; nothing here runs per frame.
+  const STEP = 4.0;              // sample spacing along a lane
+  const JOIN = 11.0;             // how close a join has to be
+  const GRID = 12.0;
+  const sx = [], sz = [], sl = [], st = [];
+  const grid = new Map();
+  const key = (x, z) => `${Math.floor(x / GRID)},${Math.floor(z / GRID)}`;
+  lanes.forEach((lane, li) => {
+    for (let t = 0; t <= lane.len; t += STEP) {
+      const [x, z] = pointAt(lane, t);
+      const i = sx.length;
+      sx.push(x); sz.push(z); sl.push(li); st.push(t);
+      const k = key(x, z);
+      let cell = grid.get(k);
+      if (!cell) grid.set(k, cell = []);
+      cell.push(i);
+    }
+  });
+
+  lanes.forEach((lane, li) => {
     lane.next = [];
     const end = pointAt(lane, lane.len);
     const [hx, hz] = heading(lane, lane.len);
-    lanes.forEach((other, j) => {
-      if (other === lane) return;
-      const start = pointAt(other, 0);
-      if (Math.hypot(start[0] - end[0], start[1] - end[1]) > 11) return;
-      const [ox, oz] = heading(other, 0);
-      if (hx * ox + hz * oz < -0.25) return;       // no instant U-turns
-      lane.next.push(j);
-    });
-  }
+    const best = new Map();                        // target lane -> closest join
+    const gx = Math.floor(end[0] / GRID), gz = Math.floor(end[1] / GRID);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const cell = grid.get(`${gx + dx},${gz + dz}`);
+        if (!cell) continue;
+        for (const i of cell) {
+          const j = sl[i];
+          if (j === li || j === lane.pair) continue;   // self, and no U-turn
+          const ox = sx[i] - end[0], oz = sz[i] - end[1];
+          const d = Math.hypot(ox, oz);
+          if (d > JOIN) continue;
+          // The join must be ahead of us, or a lane running parallel ten metres
+          // away qualifies and cars hop sideways between neighbouring streets.
+          if (d > 0.5 && (ox * hx + oz * hz) / d < 0.3) continue;
+          const other = lanes[j];
+          if (st[i] > other.len - 6) continue;         // nothing left to drive
+          const [ux, uz] = heading(other, st[i]);
+          if (hx * ux + hz * uz < -0.25) continue;     // no doubling back
+          const prev = best.get(j);
+          if (!prev || d < prev.d) best.set(j, { lane: j, t: st[i], d });
+        }
+      }
+    }
+    for (const v of best.values()) lane.next.push({ lane: v.lane, t: v.t });
+  });
   return lanes;
 }
 
 // -------------------------------------------------------------- traffic ---
-const SEE = 300;        // beyond this a car is hidden, so it can be moved
-const NEAR = 130;       // ...and brought back this close, out of your eyeline
+const SEE = 420;        // beyond this a car is hidden, so it can be moved
+const NEAR = 200;       // ...and brought back no closer than this, out of your eyeline
 // A bus is different. There is always exactly one, and it is rare because it is
 // usually somewhere else — not because the pool might not contain one, which is
 // what a per-load coin gave: a bus for the whole session or none at all.
@@ -491,6 +536,8 @@ const LANE_HALF_PLAYER = 2.0;
 // genuinely in your path.
 const LANE_HALF_ONCOMING = 0.85;
 const STUCK_UNSEEN = 60;   // seconds jammed before a car off-screen is recycled
+const PLACE_TRIES = 400;   // how hard place() looks for a spot in the ring
+const PLACE_RELAX = 300;   // ...after which it stops insisting on being behind you
 const STUCK_SEEN = 180;    // ...and a longer grace period if you can see it
 
 export class Traffic {
@@ -518,7 +565,7 @@ export class Traffic {
       const c = { ...v, lane: 0, t: 0, speed: 0, target: 8, yaw: 0, spin: 0, stuck: 0 };
       this.cars.push(c);
       this.place(c, { x: 0, z: 0 }, null,
-        c.big ? BUS_NEAR : 20, c.big ? BUS_SEE - 120 : 220);
+        c.big ? BUS_NEAR : 70, c.big ? BUS_SEE - 120 : 300);
     }
   }
 
@@ -529,9 +576,16 @@ export class Traffic {
    * us prefer spots behind the camera, so nothing pops into view.
    */
   place(c, at, forward, minD, maxD) {
-    let best = null, bestErr = Infinity;
+    let best = null, bestErr = Infinity;      // nearest miss, whichever side
+    let far = null, farErr = Infinity;        // nearest miss that is not too close
     const pool = c.big ? this.busLanes : null;
-    for (let k = 0; k < 24; k++) {
+    // A point picked uniformly from 400km of lane lands in the target ring
+    // about 1% of the time, so 24 tries found one twice in twenty and the rest
+    // fell back. Respawns are rare — a car survives half a minute or more
+    // before it is recycled — so this can afford to keep looking. It breaks the
+    // moment it succeeds, which takes about 110 tries on average: tens of
+    // microseconds, and nothing per frame.
+    for (let k = 0; k < PLACE_TRIES; k++) {
       const li = pool ? pool[Math.floor(Math.random() * pool.length)]
         : Math.floor(Math.random() * this.lanes.length);
       const lane = this.lanes[li];
@@ -541,11 +595,18 @@ export class Traffic {
       const d = Math.hypot(dx, dz);
       const inBand = d >= minD && d <= maxD;
       const behind = !forward || (dx * forward.x + dz * forward.z) / (d || 1) <= 0.2;
-      if (inBand && (behind || k >= 18)) { best = [li, t, lane]; break; }
-      // keep the nearest miss, so a car is never left stranded on lane 0
+      if (inBand && (behind || k >= PLACE_RELAX)) { best = [li, t, lane]; break; }
       const err = inBand ? 0 : (d < minD ? minD - d : d - maxD);
+      // Two fallbacks, and the order matters. A point picked uniformly from 400km
+      // of lane is almost never inside the band — 89% of respawns used to land
+      // here — and taking the nearest miss by absolute error meant a car
+      // materialising 40m away in plain sight. Overshooting is free: a car that
+      // appears 400m off is a car you cannot see. So prefer too far to too near,
+      // and only accept too near if nothing else turned up at all.
+      if (d >= minD && err < farErr) { farErr = err; far = [li, t, lane]; }
       if (err < bestErr) { bestErr = err; best = [li, t, lane]; }
     }
+    best = far || best;
     if (!best) return false;
     const [li, t, lane] = best;
     c.lane = li;
@@ -622,11 +683,15 @@ export class Traffic {
         const opts = lane.next;
         const over = c.t - lane.len;
         if (opts.length) {
-          c.lane = opts[Math.floor(Math.random() * opts.length)];
+          // a join can be partway along the next lane, so carry the offset
+          const pick = opts[Math.floor(Math.random() * opts.length)];
+          c.lane = pick.lane;
+          c.t = pick.t + over;
         } else {
-          c.lane = lane.pair !== undefined ? lane.pair : c.lane;   // dead end: come back
+          // a genuine dead end — a cul-de-sac — where turning round is right
+          c.lane = lane.pair !== undefined ? lane.pair : c.lane;
+          c.t = over;
         }
-        c.t = over;
         c.target = this.lanes[c.lane].speed
           * (c.big ? 0.62 + Math.random() * 0.2 : 0.8 + Math.random() * 0.35);
       }

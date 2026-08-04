@@ -271,7 +271,7 @@ async function boot() {
   await frame();
   crowd = new Crowd(worldData, scene, MOBILE ? 16 : 36);
   // the parked cars are handed over so the lanes can be eased around them
-  traffic = new Traffic(worldData, scene, MOBILE ? 12 : 24, 7,
+  traffic = new Traffic(worldData, scene, MOBILE ? 18 : 36, 7,
     parked ? parked.slots : null);
   const tramway = buildTramway(worldData, materials, scene, built.colliders);
   // one tram each way, as on the real double track
